@@ -270,5 +270,9 @@ socket.on("connect", () => {
 
 socket.on("connect_error", (err) => {
   console.error("Connection error:", err);
+
 });
 
+socket.on("connect", () => {
+  console.log("✅ Connected:", socket.id);
+});
