@@ -3,16 +3,14 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 
-app.use(cors({
-  origin: "*",   // 🔥 allow all (for now)
+const app = express();
+app.use(cors());
+ origin: "*",   // 🔥 allow all (for now)
   methods: ["GET", "POST"]
 }));
 
-const app = express();
-app.use(cors());
-
 const server = http.createServer(app);
-server.setTimeout(60000);
+
 
 const io = new Server(server, {
   cors: {
@@ -21,6 +19,7 @@ const io = new Server(server, {
     },
   transports: ["polling"]
 });
+server.setTimeout(60000);
 
 app.set("trust proxy", 1);
 
