@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DChat 🍻</title>
+
+  <!-- Socket -->
+  <script src="http://localhost:3000/socket.io/socket.io.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0f172a;
+      color: white;
+      overflow-y: auto; /* ✅ allows scroll */
+    }
+
+    /* STATUS */
+    #status {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 18px;
+      color: #94a3b8;
+      z-index: 1000;
+    }
+
+    /* VIDEO SECTION */
+    #videoContainer {
+      display: flex;
+      height: 80vh;
+      gap: 10px;
+      padding: 10px;
+    }
+
+    .videoBox {
+      flex: 1;
+      position: relative;
+      border-radius: 15px;
+      overflow: hidden;
+      border: 2px solid #1e293b;
+      box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    }
+
+    .videoBox video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: black;
+    }
+
+    .videoBox span {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.6);
+      padding: 5px 10px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    /* SELECTION SCREEN */
+    #selectionScreen {
+     position: absolute;
+     top: 50%;
+     left: 50%;
+     transform: translate(-50%, -50%);
+     z-index: 2000;
+  }
+
+  .selectionCard {
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(15px);
+    padding: 30px 40px;
+    border-radius: 20px;
+    text-align: center;
+    box-shadow: 0 0 40px rgba(0,0,0,0.6);
+    animation: fadeIn 0.5s ease;
+ }
+
+ .drinkOptions {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 20px;
+ }
+
+ .drinkOptions button {
+   padding: 14px 20px;
+   font-size: 16px;
+   border-radius: 12px;
+   background: #1e293b;
+   border: none;
+   color: white;
+   cursor: pointer;
+   transition: 0.3s;
+ }
+
+ .drinkOptions button:hover {
+   background: #38bdf8;
+   transform: scale(1.1);
+ }
+
+    #selectionScreen button {
+      padding: 12px 18px;
+      margin: 8px;
+      border-radius: 10px;
+      background: #1e293b;
+      color: white;
+      border: none;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+
+    #selectionScreen button:hover {
+      background: #38bdf8;
+      transform: scale(1.05);
+    }
+
+    /* BOTTOM BAR */
+    #bottomBar {
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      background: #020617;
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+      padding: 15px;
+      z-index: 1000;
+    }
+
+    #bottomBar button {
+      padding: 12px 18px;
+      font-size: 16px;
+      border-radius: 10px;
+      background: #1e293b;
+      color: white;
+      border: none;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+
+    #bottomBar button:hover {
+      background: #38bdf8;
+      transform: scale(1.1);
+    }
+
+    .homeBtn {
+      background: #ef4444;
+    }
+
+    /* CHAT */
+   #chatBox {
+    position: fixed;
+    bottom: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 400px;
+    max-height: 300px;
+    background: #020617;
+    border-radius: 15px;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 0 20px rgba(0,0,0,0.6);
+    z-index: 1000;
+  }
+
+ #chatHeader {
+    padding: 10px;
+    background: #1e293b;
+    text-align: center;
+    font-weight: bold;
+  }
+
+ #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+  }
+
+  #chatInputBox {
+    display: flex;
+  }
+
+  #chatInputBox input {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    background: #020617;
+    color: white;
+  }
+
+  #chatInputBox button {
+    padding: 10px 15px;
+    background: #38bdf8;
+    border: none;
+    cursor: pointer;
+  }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+    }
+
+    #messages div {
+      margin-bottom: 10px;
+      padding: 8px;
+      border-radius: 8px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    #chatInput {
+      border: none;
+      padding: 12px;
+      background: #020617;
+      color: white;
+      border-top: 1px solid #1e293b;
+    }
+
+    /* ABOUT + CONTACT */
+    #aboutSection {
+      padding: 40px;
+      text-align: center;
+    }
+
+    #contactSection {
+      padding: 30px;
+      text-align: center;
+      background: #020617;
+    }
+
+    /* ANIMATION */
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- STATUS -->
+  <div id="status">Select a drink to begin 🍻</div>
+
+  <!-- SELECTION SCREEN -->
+  <div id="selectionScreen">
+   <div class="selectionCard">
+     <h2>Choose Your Drink 🍻</h2>
+
+     <div class="drinkOptions">
+      <button id="whiskyBtn">🥃 Whisky</button>
+      <button id="rumBtn">🍹 Rum</button>
+      <button id="vodkaBtn">🍸 Vodka</button>
+      <button id="wineBtn">🍷 Wine</button>
+     </div>
+    </div>
+  </div>
+
+  <!-- VIDEO -->
+  <div id="videoContainer">
+    <div class="videoBox">
+      <video id="localVideo" autoplay muted></video>
+      <span>You</span>
+    </div>
+
+    <div class="videoBox">
+      <video id="remoteVideo" autoplay></video>
+      <span>Stranger</span>
+    </div>
+  </div>
+
+  <!-- CHAT -->
+  <div id="chatBox">
+    <div id="chatHeader">💬 Chat</div>
+
+    <div id="messages"></div>
+
+    <div id="chatInputBox">
+      <input id="chatInput" placeholder="Type a message..." />
+      <button onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+  <!-- BOTTOM BAR -->
+  <div id="bottomBar">
+    <button id="nextBtn">Next ⏭️</button>
+    <button onclick="goBack()" class="homeBtn">🏠 Home</button>
+    <button id="chatToggleBtn">💬 Chat</button>
+  </div>
+
+  <!-- ABOUT -->
+  <div id="aboutSection">
+    <h2>The Philosophy of the Yard</h2>
+       <p class="manifesto">
+            In a world of "likes," "algorithms," and "perfectly curated feeds," we lost something vital: <strong>The Unfiltered Night.</strong> 
+            DRUNKYARD isn't just another messaging app; it’s a digital tavern. It’s the virtual version of those 2:00 AM conversations where the ego disappears, the guards come down, and the truth comes out. 
+            Whether you’re here to vent, to brainstorm your next big startup idea, or just to find a fellow traveler in the digital wilderness, you’re in the right place.
+       </p>
+       <div class="content-grid">
+            <div class="column">
+                <h3>Why We’re Here</h3>
+                <ul>
+                    <li><strong>Zero Polish, All Soul:</strong> We don't care about your profile picture or your professional bio. We care about what you have to say right now.</li>
+                    <li><strong>Real-Time, Real Human:</strong> Powered by instant connectivity, every message is a live heartbeat. No delays, no "seen" receipts—just raw, flowing dialogue.</li>
+                    <li><strong>The "Backyard" Vibe:</strong> This is the space for the ideas that are too wild for LinkedIn and too honest for Instagram.</li>
+                </ul>
+            </div>
+
+            <div class="column">
+                <h3>The Yard Rules</h3>
+                <ul>
+                    <li><strong>Be Authentic:</strong> Bring your realest self. The Yard doesn't reward pretension.</li>
+                    <li><strong>Respect the Space:</strong> We’re here for the "drunk" honesty, not the "drunk" hostility. Keep the vibes high.</li>
+                    <li><strong>Leave it on the Floor:</strong> What happens in the Yard stays in the Yard.</li>
+                </ul>
+            </div>
+           </div>
+
+           <footer>
+             <blockquote>
+                "The best conversations don't happen in boardrooms or on stages. They happen in the yard, late at night, when everyone else is asleep."
+                <cite>— The DRUNKYARD Team</cite>
+             </blockquote>
+          </footer>
+        </div>
+
+    
+
+    <p>
+      Built using WebRTC, Socket.io, and modern frontend design principles.
+    </p>
+  </div>
+
+  <!-- CONTACT -->
+  <div id="contactSection">
+    <h3>Contact</h3>
+    <p>Email: gopalshukla2257@gmail.com</p>
+    <p>LinkedIn: linkedin.com/in/gopal-shukla-7b8202147/</p>
+  </div>
+
+  <!-- SCRIPT -->
+  <script src="./script.js"></script>
+
+</body>
+</html>
