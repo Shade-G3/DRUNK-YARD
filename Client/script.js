@@ -34,18 +34,27 @@ const config = {
 };
 
 // 🎥 START CAMERA
-async function start() {
-  localStream = await navigator.mediaDevices.getUserMedia({
-    video: true,
-    audio: true
-  });
+async function startCamera() {
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true
+    });
 
-  document.getElementById("localVideo").srcObject = localStream;
+    document.getElementById("localVideo").srcObject = localStream;
+
+    console.log("✅ Camera started");
+
+    // 🔥 IMPORTANT: notify server you're ready
+    socket.emit("ready");
+
+  } catch (err) {
+    console.error("Camera error:", err);
+  }
 }
-
 document.addEventListener("click", () => {
   if (!localStream) {
-    start();
+    startCamera();
   }
 });
 
