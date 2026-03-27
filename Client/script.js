@@ -1,4 +1,6 @@
-const socket = io("https://https://drunk-yard.onrender.com");
+const socket = io("https://https://drunk-yard.onrender.com"),{
+  transports: ["websocket", "polling"]
+  });
 socket.on("connect", () => {
   console.log("Connected:", socket.id);
 });
