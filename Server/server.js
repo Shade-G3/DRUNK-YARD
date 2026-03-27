@@ -11,9 +11,8 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
-  },
-  transports: ["websocket", "polling"]
+    },
+  transports: ["polling"]
 });
 
 app.set("trust proxy", 1);
