@@ -51,15 +51,19 @@ socket.on("connect", () => {
 
 // 🎯 CATEGORY SELECTION
 function selectCategory(category) {
-  console.log("Selected:", category);
+  console.log("🔥 BUTTON CLICKED:", category);
 
+  // Hide selection UI
   document.getElementById("selectionScreen").style.display = "none";
 
-  document.getElementById("status").innerText = "Finding match...";
+  // Update status
+  document.getElementById("status").innerText = "Finding someone with same choice...";
 
+  // 🔥 EMIT TO BACKEND
   socket.emit("join-category", { category });
-}
 
+  console.log("🚀 EMITTED TO SERVER:", category);
+}
  
 // ⏳ WAITING
 socket.on("waiting", ({ message }) => {
