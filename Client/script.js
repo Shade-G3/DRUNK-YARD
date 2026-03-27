@@ -1,5 +1,4 @@
-const socket = io("http://localhost:3000");
-
+const socket = io("https://https://drunk-yard.onrender.com");
 socket.on("connect", () => {
   console.log("Connected:", socket.id);
 });
