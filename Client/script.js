@@ -290,3 +290,10 @@ socket.on("connect_error", (err) => {
 socket.on("connect", () => {
   console.log("✅ Connected:", socket.id);
 });
+socket.on("ready", () => {
+  console.log("⚡ Both users ready");
+
+  if (localStream && currentRoom) {
+    createPeerConnection();
+  }
+});
