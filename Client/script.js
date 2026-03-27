@@ -1,5 +1,8 @@
 const socket = io("https://https://drunk-yard.onrender.com",{
-  transports: ["polling"]
+  transports: ["polling"],  // 🔥 FORCE POLLING
+  reconnection: true,
+  reconnectionAttempts: 10,
+  reconnectionDelay: 1000
   });
 socket.on("connect", () => {
   console.log("Connected:", socket.id);
