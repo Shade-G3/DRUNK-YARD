@@ -27,7 +27,11 @@ async function start() {
   document.getElementById("localVideo").srcObject = localStream;
 }
 
-start();
+document.addEventListener("click", () => {
+  if (!localStream) {
+    start();
+  }
+});
 
 // 🔌 SOCKET CONNECT
 socket.on("connect", () => {
@@ -244,4 +248,12 @@ document.getElementById("chatToggleBtn").onclick = () => {
     chat.style.display = "none";
   }
 };
+
+socket.on("connect", () => {
+  console.log("Connected to backend:", socket.id);
+});
+
+socket.on("connect_error", (err) => {
+  console.error("Connection error:", err);
+});
 
