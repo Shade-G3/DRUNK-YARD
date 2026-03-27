@@ -1,5 +1,5 @@
 const socket = io("https://https://drunk-yard.onrender.com",{
-  transports: ["websocket", "polling"]
+  transports: ["polling"]
   });
 socket.on("connect", () => {
   console.log("Connected:", socket.id);
