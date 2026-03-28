@@ -1,5 +1,5 @@
 const socket = io("https://drunk-yard.onrender.com",{
-  transports: ["polling"],  // 🔥 FORCE POLLING
+  transports: ["websocket"],  // 🔥 FORCE POLLING
   reconnection: true,
   reconnectionAttempts: 10,
   reconnectionDelay: 1000
@@ -45,9 +45,7 @@ async function startCamera() {
 
     console.log("✅ Camera started");
 
-    // 🔥 IMPORTANT: notify server you're ready
-    socket.emit("ready");
-
+  
   } catch (err) {
     console.error("Camera error:", err);
   }
@@ -109,6 +107,8 @@ socket.on("matched", async ({ roomId: id }) => {
     console.log("Waiting for camera...");
     return;
   }
+  socket.emit("ready", { roomId });
+  
 
   createPeerConnection();
 
@@ -117,10 +117,11 @@ socket.on("matched", async ({ roomId: id }) => {
   if (isCaller) {
     console.log("Creating offer...");
 
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
+   await peerConnection.setLocalDescription(offer);
 
-    socket.emit("signal", { roomId, data: offer });
+setTimeout(() => {
+  socket.emit("signal", { roomId, data: peerConnection.localDescription });
+}, 300);
   }
 });
 
@@ -150,6 +151,18 @@ socket.on("signal", async (data) => {
       console.error("ICE error:", err);
     }
   }
+});
+socket.on("partner-left", () => {
+  alert("Stranger disconnected 😢");
+
+  roomId = null;
+
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+  }
+
+  goBack();
 });
 
 // 🔗 CREATE PEER CONNECTION
@@ -216,19 +229,7 @@ function addMessage(msg) {
   document.getElementById("messages").appendChild(div);
 }
 
-socket.on("partner-left", () => {
-  alert("Stranger disconnected 😢");
 
-  goBack();
-});
-
-  // reset connection
-  roomId = null;
-
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
-  }
   socket.on("online-count", (count) => {
   document.getElementById("status").innerText =
     `👥 ${count} users online`;
@@ -293,7 +294,15 @@ socket.on("connect", () => {
 socket.on("ready", () => {
   console.log("⚡ Both users ready");
 
-  if (localStream && currentRoom) {
+  if (localStream && roomId) {
     createPeerConnection();
   }
 });
+peerConnection.ontrack = (event) => {
+  console.log("🎥 Remote stream received", event);
+  document.getElementById("remoteVideo").srcObject = event.streams[0];
+};
+
+peerConnection.oniceconnectionstatechange = () => {
+  console.log("ICE state:", peerConnection.iceConnectionState);
+};
