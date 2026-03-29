@@ -89,8 +89,9 @@ socket.on("no-match-found", () => {
 });
 
 // 🎉 MATCHED
-socket.on("matched", async ({ roomId: id }) => {
-  console.log("MATCHED:", id);
+socket.on("matched", async ({ roomId: id, role }) => {
+  console.log("MATCHED:", id, role);
+
 
   roomId = id;
 
