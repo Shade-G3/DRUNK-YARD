@@ -17,7 +17,7 @@ const io = new Server(server, {
     origin: "*",
     methods: ["GET", "POST"]
     },
-  transports: ["polling"]
+  transports: ["websocket"]
 });
 server.setTimeout(60000);
 
@@ -31,11 +31,32 @@ let queues = {
 };
 
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  console.log("User connected:", socket.id); 
+ onlineUsers++;
+ io.emit("online-count", onlineUsers);
+
+  // ALL EVENTS HERE (merge both blocks)
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
+
+    onlineUsers--;
+    io.emit("online-count", onlineUsers);
+
+    Object.keys(queues).forEach((key) => {
+      if (queues[key]?.id === socket.id) {
+        queues[key] = null;
+      }
+    });
+  });
 
   socket.on("join-category", ({ category }) => {
+   socket.category = category;
     console.log("JOIN CATEGORY EVENT RECEIVED");
     console.log(socket.id, "selected", category);
+  socket.on("matched", ({ roomId }) => {
+     socket.roomId = roomId;
+   });
 
     if (queues[category] && queues[category].id !== socket.id) {
       const partner = queues[category];
@@ -59,6 +80,11 @@ io.on("connection", (socket) => {
       });
     }
   });
+ socket.on("disconnect", () => {
+  if (socket.roomId) {
+    socket.to(socket.roomId).emit("partner-left");
+  }
+});
 
   // ❌ If no match after some time
   socket.on("no-match", () => {
@@ -66,9 +92,11 @@ io.on("connection", (socket) => {
   });
 
   // 🔁 WebRTC signaling
-  socket.on("signal", ({ roomId, data }) => {
-    socket.to(roomId).emit("signal", data);
-  });
+socket.on("signal", ({ roomId, data }) => {
+  if (!roomId) return;
+
+  socket.to(roomId).emit("signal", data);
+});
 
   // 💬 CHAT FEATURE
   socket.on("chat-message", ({ roomId, message }) => {
@@ -78,12 +106,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
   
-  socket.on("next", ({ roomId }) => {
-   socket.to(roomId).emit("partner-left");
-
-   socket.leave(roomId);
-  });  
-
+  
     // remove from all queues
     Object.keys(queues).forEach((key) => {
       if (queues[key]?.id === socket.id) {
@@ -92,18 +115,13 @@ io.on("connection", (socket) => {
     });
   });
 });
+
+socket.on("next", ({ roomId }) => {
+   socket.to(roomId).emit("partner-left");
+
+   socket.leave(roomId);
+  });  
 let onlineUsers = 0;
-
-io.on("connection", (socket) => {
-  onlineUsers++;
-
-  io.emit("online-count", onlineUsers);
-
-  socket.on("disconnect", () => {
-    onlineUsers--;
-    io.emit("online-count", onlineUsers);
-  });
-});
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on ${PORT}`));
