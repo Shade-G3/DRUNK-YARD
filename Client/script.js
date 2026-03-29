@@ -104,8 +104,8 @@ socket.on("matched", async ({ roomId: id }) => {
 
   // 🔥 WAIT for camera
   if (!localStream) {
-    console.log("Waiting for camera...");
-    return;
+     console.log("🎥 Starting camera before connection...");
+     await startCamera();
   }
   socket.emit("ready", { roomId });
   
