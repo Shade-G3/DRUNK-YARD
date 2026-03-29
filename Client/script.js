@@ -107,21 +107,18 @@ socket.on("matched", async ({ roomId: id }) => {
      console.log("🎥 Starting camera before connection...");
      await startCamera();
   }
-  socket.emit("ready", { roomId });
+ 
   
 
-  createPeerConnection();
+   createPeerConnection();
 
-  const isCaller = socket.id === roomId.split("#")[0];
-
-  if (isCaller) {
+  if (role === "caller") {
     console.log("Creating offer...");
 
-   await peerConnection.setLocalDescription(offer);
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
 
-setTimeout(() => {
-  socket.emit("signal", { roomId, data: peerConnection.localDescription });
-}, 300);
+    socket.emit("signal", { roomId, data: offer });
   }
 });
 
@@ -175,6 +172,10 @@ function createPeerConnection() {
   }
 
   peerConnection = new RTCPeerConnection(config);
+
+  peerConnection.oniceconnectionstatechange = () => {
+    console.log("ICE state:", peerConnection.iceConnectionState);
+  };
 
   localStream.getTracks().forEach(track => {
     peerConnection.addTrack(track, localStream);
