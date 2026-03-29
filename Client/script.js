@@ -172,18 +172,20 @@ function createPeerConnection() {
   }
 
   peerConnection = new RTCPeerConnection(config);
+   console.log("✅ PeerConnection created");
 
   peerConnection.oniceconnectionstatechange = () => {
     console.log("ICE state:", peerConnection.iceConnectionState);
   };
 
+   peerConnection.ontrack = (event) => {
+    console.log("🎥 Remote stream received");
+    document.getElementById("remoteVideo").srcObject = event.streams[0];
+  };
+
   localStream.getTracks().forEach(track => {
     peerConnection.addTrack(track, localStream);
   });
-
-  peerConnection.ontrack = (event) => {
-    document.getElementById("remoteVideo").srcObject = event.streams[0];
-  };
 
   peerConnection.onicecandidate = (event) => {
     if (event.candidate) {
