@@ -53,8 +53,8 @@ io.on("connection", (socket) => {
       socket.join(roomId);
       partner.join(roomId);
 
-      io.to(socket.id).emit("matched", { roomId });
-      io.to(partner.id).emit("matched", { roomId });
+      io.to(socket.id).emit("matched", { roomId, role: "caller" });
+      io.to(partner.id).emit("matched", { roomId, role: "receiver" });
 
       queues[category] = null;
 
