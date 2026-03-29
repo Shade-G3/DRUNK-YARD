@@ -15,13 +15,14 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
     },
   transports: ["websocket"]
 });
 server.setTimeout(60000);
 
 app.set("trust proxy", 1);
+let onlineUsers = 0;
 
 let queues = {
   whisky: null,
@@ -54,9 +55,7 @@ io.on("connection", (socket) => {
    socket.category = category;
     console.log("JOIN CATEGORY EVENT RECEIVED");
     console.log(socket.id, "selected", category);
-  socket.on("matched", ({ roomId }) => {
-     socket.roomId = roomId;
-   });
+ 
 
     if (queues[category] && queues[category].id !== socket.id) {
       const partner = queues[category];
@@ -80,11 +79,17 @@ io.on("connection", (socket) => {
       });
     }
   });
+ });
+ 
  socket.on("disconnect", () => {
   if (socket.roomId) {
     socket.to(socket.roomId).emit("partner-left");
   }
 });
+ socket.on("matched", ({ roomId }) => {
+     socket.roomId = roomId;
+   });
+ 
 
   // ❌ If no match after some time
   socket.on("no-match", () => {
@@ -105,6 +110,13 @@ socket.on("signal", ({ roomId, data }) => {
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
+
+   socket.on("next", ({ roomId }) => {
+   socket.to(roomId).emit("partner-left");
+
+   socket.leave(roomId);
+  });  
+
   
   
     // remove from all queues
@@ -116,12 +128,7 @@ socket.on("signal", ({ roomId, data }) => {
   });
 });
 
-socket.on("next", ({ roomId }) => {
-   socket.to(roomId).emit("partner-left");
 
-   socket.leave(roomId);
-  });  
-let onlineUsers = 0;
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on ${PORT}`));
