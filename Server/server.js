@@ -5,22 +5,21 @@ const cors = require("cors");
 
 const app = express();
 app.use(cors({
- origin: "*",   // 🔥 allow all (for now)
+  origin: "*",   // 🔥 allow all (for now)
   methods: ["GET", "POST"]
 }));
 
 const server = http.createServer(app);
 
-
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"],
-    },
+    methods: ["GET", "POST"]
+  },
   transports: ["websocket"]
 });
-server.setTimeout(60000);
 
+server.setTimeout(60000);
 app.set("trust proxy", 1);
 
 let queues = {
@@ -33,16 +32,15 @@ let queues = {
 let onlineUsers = 0;
 
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id); 
- onlineUsers++;
- io.emit("online-count", onlineUsers);
+  console.log("User connected:", socket.id);
+  onlineUsers++;
+  io.emit("online-count", onlineUsers);
 
-// 🎯 JOIN CATEGORY
+  // 🎯 JOIN CATEGORY
   socket.on("join-category", ({ category }) => {
     console.log("JOIN CATEGORY EVENT RECEIVED");
     console.log(socket.id, "selected", category);
-   
-   socket.category = category;
+    socket.category = category;
 
     if (queues[category] && queues[category].id !== socket.id) {
       const partner = queues[category];
@@ -51,7 +49,6 @@ io.on("connection", (socket) => {
       // store room
       socket.roomId = roomId;
       partner.roomId = roomId;
-
 
       socket.join(roomId);
       partner.join(roomId);
@@ -62,7 +59,6 @@ io.on("connection", (socket) => {
       queues[category] = null;
 
       console.log(`Matched in ${category}:`, socket.id, partner.id);
-
     } else {
       queues[category] = socket;
 
@@ -72,35 +68,34 @@ io.on("connection", (socket) => {
     }
   });
 
- 
- // 🔁 WebRTC signaling
-socket.on("signal", ({ roomId, data }) => {
-  if (!roomId) return;
-
-  socket.to(roomId).emit("signal", data);
-});
+  // 🔁 WebRTC signaling
+  socket.on("signal", ({ roomId, data }) => {
+    if (!roomId) return;
+    socket.to(roomId).emit("signal", data);
+  });
 
   // 💬 CHAT FEATURE
   socket.on("chat-message", ({ roomId, message }) => {
     if (!roomId) return;
     socket.to(roomId).emit("chat-message", message);
   });
- 
- // ⏭️ NEXT (skip partner)
+
+  // ⏭️ NEXT (skip partner)
   socket.on("next", () => {
     if (socket.roomId) {
       socket.to(socket.roomId).emit("partner-left");
-
       socket.leave(socket.roomId);
       socket.roomId = null;
+    }
+  });
 
-      // ❌ DISCONNECT
+  // ❌ DISCONNECT
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
-   
     onlineUsers--;
     io.emit("online-count", onlineUsers);
-   // notify partner if in room
+
+    // notify partner if in room
     if (socket.roomId) {
       socket.to(socket.roomId).emit("partner-left");
     }
@@ -113,8 +108,6 @@ socket.on("signal", ({ roomId, data }) => {
     });
   });
 });
-
-
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on ${PORT}`));
