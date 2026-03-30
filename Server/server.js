@@ -4,10 +4,7 @@ const { Server } = require("socket.io");
 const cors = require("cors");
 
 const app = express();
-app.use(cors({
-  origin: "*",   // 🔥 allow all (for now)
-  methods: ["GET", "POST"]
-}));
+
 app.use(cors({
   origin: "*",   // 🔥 allow all (for now)
   methods: ["GET", "POST"]
@@ -21,15 +18,13 @@ const io = new Server(server, {
     methods: ["GET", "POST"]
   },
   transports: ["websocket"]
-  },
-  transports: ["websocket"]
-
-
-server.setTimeout(60000);
-app.set("trust proxy", 1);
+ });
+  
 
 server.setTimeout(60000);
 app.set("trust proxy", 1);
+
+let onlineUsers = 0;
 
 let queues = {
    whisky: [],
@@ -38,48 +33,40 @@ let queues = {
   wine: []
 };
 
-let onlineUsers = 0;
-
-let onlineUsers = 0;
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
+  
   onlineUsers++;
   io.emit("online-count", onlineUsers);
-  onlineUsers++;
-  io.emit("online-count", onlineUsers);
-
-  // 🎯 JOIN CATEGORY
+  
   // 🎯 JOIN CATEGORY
   socket.on("join-category", ({ category }) => {
     console.log("JOIN CATEGORY EVENT RECEIVED");
     console.log(socket.id, "selected", category);
     socket.category = category;
-    socket.category = category;
 
-    if (queues[category] && queues[category].id !== socket.id) {
-      const partner = queues[category];
+    const queue = queues[category];
+     console.log(`${socket.id} joined ${category}`);
+
+       // ✅ IF SOMEONE IS WAITING → MATCH
+    if (queue.length > 0) {
+      const partner = queue.shift(); // FIFO
+
       const roomId = `${socket.id}#${partner.id}`;
 
-      // store room
-      socket.roomId = roomId;
-      partner.roomId = roomId;
-
-      // store room
       socket.roomId = roomId;
       partner.roomId = roomId;
 
       socket.join(roomId);
       partner.join(roomId);
 
-      io.to(socket.id).emit("matched", { roomId, role: "caller" });
-      io.to(partner.id).emit("matched", { roomId, role: "receiver" });
+      // ✅ ASSIGN ROLES
       io.to(socket.id).emit("matched", { roomId, role: "caller" });
       io.to(partner.id).emit("matched", { roomId, role: "receiver" });
 
-      queues[category] = null;
+      console.log(`✅ Matched: ${socket.id} ↔ ${partner.id}`);
 
-      console.log(`Matched in ${category}:`, socket.id, partner.id);
     } else {
       // ⏳ ADD TO QUEUE
       queue.push(socket);
@@ -90,9 +77,10 @@ io.on("connection", (socket) => {
     }
   });
 
+   
+
   // 🔁 WebRTC signaling
   socket.on("signal", ({ roomId, data }) => {
-    if (!roomId) return;
     if (!roomId) return;
     socket.to(roomId).emit("signal", data);
   });
@@ -100,59 +88,44 @@ io.on("connection", (socket) => {
   // 💬 CHAT FEATURE
   socket.on("chat-message", ({ roomId, message }) => {
     if (!roomId) return;
-    if (!roomId) return;
     socket.to(roomId).emit("chat-message", message);
   });
 
   // ⏭️ NEXT (skip partner)
   socket.on("next", () => {
-    if (socket.roomId) {
-      socket.to(socket.roomId).emit("partner-left");
-      socket.leave(socket.roomId);
-      socket.roomId = null;
-    }
+     handleDisconnect(socket, true);
   });
 
-  // ❌ DISCONNECT
-  // ⏭️ NEXT (skip partner)
-  socket.on("next", () => {
-    if (socket.roomId) {
-      socket.to(socket.roomId).emit("partner-left");
-      socket.leave(socket.roomId);
-      socket.roomId = null;
-    }
-  });
 
   // ❌ DISCONNECT
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-    onlineUsers--;
-    io.emit("online-count", onlineUsers);
-
-    // notify partner if in room
-    if (socket.roomId) {
-      socket.to(socket.roomId).emit("partner-left");
-    }
-    onlineUsers--;
-    io.emit("online-count", onlineUsers);
-
-    // notify partner if in room
-    if (socket.roomId) {
-      socket.to(socket.roomId).emit("partner-left");
-    }
-
-    // remove from all queues
-    Object.keys(queues).forEach((key) => {
-      if (queues[key]?.id === socket.id) {
-        queues[key] = null;
-      }
-    });
+   handleDisconnect(socket, false);
   });
+
+  // 🔥 CLEANUP FUNCTION (IMPORTANT)
+  function handleDisconnect(socket, isNext) {
+    console.log("🔴 Leaving:", socket.id);
+
+    // notify partner
+    if (socket.roomId) {
+      socket.to(socket.roomId).emit("partner-left");
+      socket.leave(socket.roomId);
+      socket.roomId = null;
+    }
+
+    // remove from queue
+    if (socket.category && queues[socket.category]) {
+      queues[socket.category] = queues[socket.category].filter(
+        (s) => s.id !== socket.id
+      );
+    }
+
+    if (!isNext) {
+      onlineUsers--;
+      io.emit("online-count", onlineUsers);
+    }
+  }
 });
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on ${PORT}`));
-
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on ${PORT}`));
