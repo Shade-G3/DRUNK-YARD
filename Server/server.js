@@ -8,6 +8,10 @@ app.use(cors({
   origin: "*",   // 🔥 allow all (for now)
   methods: ["GET", "POST"]
 }));
+app.use(cors({
+  origin: "*",   // 🔥 allow all (for now)
+  methods: ["GET", "POST"]
+}));
 
 const server = http.createServer(app);
 
@@ -17,17 +21,24 @@ const io = new Server(server, {
     methods: ["GET", "POST"]
   },
   transports: ["websocket"]
-});
+  },
+  transports: ["websocket"]
+
+
+server.setTimeout(60000);
+app.set("trust proxy", 1);
 
 server.setTimeout(60000);
 app.set("trust proxy", 1);
 
 let queues = {
-  whisky: null,
-  rum: null,
-  vodka: null,
-  wine: null
+   whisky: [],
+  rum: [],
+  vodka: [],
+  wine: []
 };
+
+let onlineUsers = 0;
 
 let onlineUsers = 0;
 
@@ -35,11 +46,15 @@ io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
   onlineUsers++;
   io.emit("online-count", onlineUsers);
+  onlineUsers++;
+  io.emit("online-count", onlineUsers);
 
+  // 🎯 JOIN CATEGORY
   // 🎯 JOIN CATEGORY
   socket.on("join-category", ({ category }) => {
     console.log("JOIN CATEGORY EVENT RECEIVED");
     console.log(socket.id, "selected", category);
+    socket.category = category;
     socket.category = category;
 
     if (queues[category] && queues[category].id !== socket.id) {
@@ -50,9 +65,15 @@ io.on("connection", (socket) => {
       socket.roomId = roomId;
       partner.roomId = roomId;
 
+      // store room
+      socket.roomId = roomId;
+      partner.roomId = roomId;
+
       socket.join(roomId);
       partner.join(roomId);
 
+      io.to(socket.id).emit("matched", { roomId, role: "caller" });
+      io.to(partner.id).emit("matched", { roomId, role: "receiver" });
       io.to(socket.id).emit("matched", { roomId, role: "caller" });
       io.to(partner.id).emit("matched", { roomId, role: "receiver" });
 
@@ -60,7 +81,8 @@ io.on("connection", (socket) => {
 
       console.log(`Matched in ${category}:`, socket.id, partner.id);
     } else {
-      queues[category] = socket;
+      // ⏳ ADD TO QUEUE
+      queue.push(socket);
 
       socket.emit("waiting", {
         message: "Waiting for someone with same choice..."
@@ -71,15 +93,27 @@ io.on("connection", (socket) => {
   // 🔁 WebRTC signaling
   socket.on("signal", ({ roomId, data }) => {
     if (!roomId) return;
+    if (!roomId) return;
     socket.to(roomId).emit("signal", data);
   });
 
   // 💬 CHAT FEATURE
   socket.on("chat-message", ({ roomId, message }) => {
     if (!roomId) return;
+    if (!roomId) return;
     socket.to(roomId).emit("chat-message", message);
   });
 
+  // ⏭️ NEXT (skip partner)
+  socket.on("next", () => {
+    if (socket.roomId) {
+      socket.to(socket.roomId).emit("partner-left");
+      socket.leave(socket.roomId);
+      socket.roomId = null;
+    }
+  });
+
+  // ❌ DISCONNECT
   // ⏭️ NEXT (skip partner)
   socket.on("next", () => {
     if (socket.roomId) {
@@ -99,6 +133,13 @@ io.on("connection", (socket) => {
     if (socket.roomId) {
       socket.to(socket.roomId).emit("partner-left");
     }
+    onlineUsers--;
+    io.emit("online-count", onlineUsers);
+
+    // notify partner if in room
+    if (socket.roomId) {
+      socket.to(socket.roomId).emit("partner-left");
+    }
 
     // remove from all queues
     Object.keys(queues).forEach((key) => {
@@ -108,6 +149,10 @@ io.on("connection", (socket) => {
     });
   });
 });
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Server running on ${PORT}`));
+
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on ${PORT}`));
