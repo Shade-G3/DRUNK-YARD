@@ -108,34 +108,48 @@ io.on("connection", (socket) => {
 
     // ⏭️ NEXT (skip and rematch)
   socket.on("next", () => {
-    if (!socket.category) return;
+  if (!socket.category) return;
 
-    handleDisconnect(socket, true);
+  console.log("⏭️ NEXT clicked by", socket.id);
 
-     // 🔥 REJOIN SAME CATEGORY
-    const queue = queues[socket.category];
+  // 🔴 Clean old connection
+  if (socket.roomId) {
+    socket.to(socket.roomId).emit("partner-left");
+    socket.leave(socket.roomId);
+    socket.roomId = null;
+  }
 
-    if (queue.length > 0) {
-     const partner = queue.shift();
+  // 🔴 Remove from queue (important)
+  queues[socket.category] = queues[socket.category].filter(
+    (s) => s.id !== socket.id
+  );
 
-     const roomId = `${socket.id}#${partner.id}`;
+  const queue = queues[socket.category];
 
-     socket.roomId = roomId;
-     partner.roomId = roomId;
+  // 🔥 MATCH AGAIN
+  if (queue.length > 0) {
+    const partner = queue.shift();
 
-     socket.join(roomId);
-     partner.join(roomId);
+    const roomId = `${socket.id}#${partner.id}`;
 
-     io.to(socket.id).emit("matched", { roomId, role: "caller" });
-     io.to(partner.id).emit("matched", { roomId, role: "receiver" });
+    socket.roomId = roomId;
+    partner.roomId = roomId;
 
-   } else {
-     queue.push(socket);
-     socket.emit("waiting", {
+    socket.join(roomId);
+    partner.join(roomId);
+
+    io.to(socket.id).emit("matched", { roomId, role: "caller" });
+    io.to(partner.id).emit("matched", { roomId, role: "receiver" });
+
+    console.log(`✅ Rematched: ${socket.id} ↔ ${partner.id}`);
+  } else {
+    queue.push(socket);
+
+    socket.emit("waiting", {
       message: "Waiting for someone new..."
-     });
-    }
-  });
+    });
+  }
+});
 
      socket.on("go-home", () => {
       handleDisconnect(socket, true);
