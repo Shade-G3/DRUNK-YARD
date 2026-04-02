@@ -106,6 +106,19 @@ io.on("connection", (socket) => {
   function handleDisconnect(socket, isNext) {
     console.log("🔴 Leaving:", socket.id);
 
+    // NEXT: keep same category, find another random person from same queue.
+  socket.on("next", () => {
+    if (!socket.category) return;
+    leaveCurrentSession({ countOffline: false });
+    joinCategory(socket.category);
+ });
+
+// HOME: leave room/queue and wait for user to choose category again.
+  socket.on("go-home", () => {
+    leaveCurrentSession({ countOffline: false });
+    socket.category = null;
+ });
+    
     // notify partner
     if (socket.roomId) {
       socket.to(socket.roomId).emit("partner-left");
