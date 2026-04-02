@@ -18,6 +18,17 @@ let localStream;
 let peerConnection;
 let roomId;
 
+function resetConnectionState() {
+  roomId = null;
+
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+  }
+
+  document.getElementById("remoteVideo").srcObject = null;
+}
+
 const config = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -66,6 +77,7 @@ socket.on("connect", () => {
 
 // 🎯 CATEGORY SELECTION
 function selectCategory(category) {
+  currentCategory = category; 
   console.log("🔥 BUTTON CLICKED:", category);
 
   // Hide selection UI
@@ -168,19 +180,30 @@ socket.on("partner-left", () => {
 
 function goHome() {
   socket.emit("go-home");
+
   resetConnectionState();
+
+  const selectionScreen = document.getElementById("selectionScreen"); // ✅ FIX
   selectionScreen.style.display = "grid";
+
   document.getElementById("chatBox").style.display = "none";
+
   currentCategory = null;
-  setStatus("Select a drink to begin 🍻");
+
+  document.getElementById("status").innerText = "Select a drink to begin 🍻";
 }
 
-document.getElementById("nextBtn").onclick = () => {
-  if (!currentCategory) return;
+ document.getElementById("nextBtn").onclick = () => {
+  if (!currentCategory) {
+    console.log("No category selected ❌");
+    return;
+  }
 
   resetConnectionState();
-  selectionScreen.style.display = "none";
-  setStatus("Finding next person in your drink category...");
+
+  document.getElementById("status").innerText =
+    "Finding next person...";
+
   socket.emit("next");
 };
 
