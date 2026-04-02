@@ -184,7 +184,8 @@ function goHome() {
   resetConnectionState();
 
   const selectionScreen = document.getElementById("selectionScreen"); // ✅ FIX
-  selectionScreen.style.display = "grid";
+  selectionScreen.style.display = "Block";
+  document.getElementById("selectionScreen").style.opacity = "1";
 
   document.getElementById("chatBox").style.display = "none";
 
