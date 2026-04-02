@@ -12,6 +12,8 @@ socket.on("connect_error", (err) => {
   console.error("Connection error:", err);
 });
 
+let currentCategory = null;
+
 let localStream;
 let peerConnection;
 let roomId;
@@ -55,6 +57,7 @@ document.addEventListener("click", () => {
     startCamera();
   }
 });
+
 
 // 🔌 SOCKET CONNECT
 socket.on("connect", () => {
@@ -160,8 +163,26 @@ socket.on("partner-left", () => {
     peerConnection = null;
   }
 
-  goBack();
+  goHome();
 });
+
+function goHome() {
+  socket.emit("go-home");
+  resetConnectionState();
+  selectionScreen.style.display = "grid";
+  document.getElementById("chatBox").style.display = "none";
+  currentCategory = null;
+  setStatus("Select a drink to begin 🍻");
+}
+
+document.getElementById("nextBtn").onclick = () => {
+  if (!currentCategory) return;
+
+  resetConnectionState();
+  selectionScreen.style.display = "none";
+  setStatus("Finding next person in your drink category...");
+  socket.emit("next");
+};
 
 // 🔗 CREATE PEER CONNECTION
 function createPeerConnection() {
