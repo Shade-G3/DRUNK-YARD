@@ -106,18 +106,41 @@ io.on("connection", (socket) => {
   function handleDisconnect(socket, isNext) {
     console.log("🔴 Leaving:", socket.id);
 
-    // NEXT: keep same category, find another random person from same queue.
+    // ⏭️ NEXT (skip and rematch)
   socket.on("next", () => {
     if (!socket.category) return;
-    leaveCurrentSession({ countOffline: false });
-    joinCategory(socket.category);
- });
 
-// HOME: leave room/queue and wait for user to choose category again.
-  socket.on("go-home", () => {
-    leaveCurrentSession({ countOffline: false });
-    socket.category = null;
- });
+    handleDisconnect(socket, true);
+
+     // 🔥 REJOIN SAME CATEGORY
+    const queue = queues[socket.category];
+
+    if (queue.length > 0) {
+     const partner = queue.shift();
+
+     const roomId = `${socket.id}#${partner.id}`;
+
+     socket.roomId = roomId;
+     partner.roomId = roomId;
+
+     socket.join(roomId);
+     partner.join(roomId);
+
+     io.to(socket.id).emit("matched", { roomId, role: "caller" });
+     io.to(partner.id).emit("matched", { roomId, role: "receiver" });
+
+   } else {
+     queue.push(socket);
+     socket.emit("waiting", {
+      message: "Waiting for someone new..."
+     });
+    }
+  });
+
+     socket.on("go-home", () => {
+      handleDisconnect(socket, true);
+      socket.category = null;
+     });
     
     // notify partner
     if (socket.roomId) {
