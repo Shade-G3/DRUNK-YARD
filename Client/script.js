@@ -19,6 +19,7 @@ let peerConnection;
 let roomId;
 
 const nextSound = new Audio("https://www.soundjay.com/buttons/sounds/button-3.mp3");
+nextSound.volume = 0.5;
 
 let searchInterval;
 
