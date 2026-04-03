@@ -3,12 +3,16 @@ video {
   margin: 10px;
 }
 #rotateHint {
-  margin-top: 10px;
-  font-size: 14px;
+  font-size: 13px;
   color: #94a3b8;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
   background: rgba(255,255,255,0.05);
-  padding: 8px 12px;
-  border-radius: 10px;
-  display: inline-block;
-  backdrop-filter: blur(10px);
+  display: none;
+  text-align: center;
+}
+#rotateHint {
+  opacity: 0;
+  transition: opacity 0.3s ease;
 }
