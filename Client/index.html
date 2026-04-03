@@ -269,8 +269,15 @@
 
   <!-- VIDEO -->
 <div id="videoContainer">
-  <video id="remoteVideo" autoplay playsinline></video>
-  <video id="localVideo" autoplay muted playsinline></video>
+  <div class="videoBox">
+    <video id="localVideo" autoplay muted></video>
+    <span>You</span>
+  </div>
+
+  <div class="videoBox">
+    <video id="remoteVideo" autoplay></video>
+    <span>Stranger</span>
+  </div>
 </div>
   
   <!-- CHAT -->
