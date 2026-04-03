@@ -268,13 +268,17 @@
   </div>
 
   <!-- VIDEO -->
- <div id="videoContainer">
-  <!-- Stranger FULL SCREEN -->
-  <video id="remoteVideo" autoplay playsinline></video>
+<div id="videoContainer">
+  <div class="videoBox">
+    <video id="localVideo" autoplay muted></video>
+    <span>You</span>
+  </div>
 
-  <!-- Your camera (small overlay) -->
-  <video id="localVideo" autoplay muted playsinline></video>
- </div>
+  <div class="videoBox">
+    <video id="remoteVideo" autoplay></video>
+    <span>Stranger</span>
+  </div>
+</div>
   
   <!-- CHAT -->
   <div id="chatBox">
