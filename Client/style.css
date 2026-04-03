@@ -22,4 +22,21 @@ video {
   }
 }
 
+#rotateHint {
+  position: fixed;
+  top: 10px;
+  width: 100%;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 14px;
+  z-index: 2000;
+  display: none; /* hidden by default */
+}
+
+/* 📱 Show ONLY on mobile portrait */
+@media (max-width: 768px) and (orientation: portrait) {
+  #rotateHint {
+    display: block;
+  }
+}
 
