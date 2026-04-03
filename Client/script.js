@@ -197,16 +197,17 @@ socket.on("signal", async (data) => {
   }
 });
 socket.on("partner-left", () => {
-  alert("Stranger disconnected 😢");
+   console.log("Stranger left");
 
-  roomId = null;
+  resetConnectionState();
 
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
-  }
+  showSearchingUI();
 
-  goHome();
+  setTimeout(() => {
+    if (currentCategory) {
+      socket.emit("next");
+    }
+  }, 400);
 });
 
 function goHome() {
