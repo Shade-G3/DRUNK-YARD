@@ -363,16 +363,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const isMobile =
     /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
     (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
+  console.log("isMobile:", isMobile); // optional but useful
 
- setTimeout(() => {
-  if (isMobile && rotateHint) {
-    rotateHint.style.display = "block";
-
-    setTimeout(() => {
-      rotateHint.style.opacity = "1";
-    }, 50);
-  }
-}, 100);
+  setTimeout(() => {
+    if (isMobile && rotateHint) {
+      rotateHint.style.display = "inline-block";
+     }
+  }, 100);
+});
 
 document.getElementById("chatToggleBtn").onclick = () => {
   const chat = document.getElementById("chatBox");
