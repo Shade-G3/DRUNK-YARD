@@ -2,46 +2,13 @@ video {
   width: 45%;
   margin: 10px;
 }
-/* DEFAULT = DESKTOP (keep your current layout) */
-
-@media (max-width: 768px) {
-  #videoContainer {
-    flex-direction: column; /* 🔥 stack vertically */
-    height: 100vh;
-  }
-
-  .videoBox {
-    width: 100%;
-    height: 50vh; /* each takes half screen */
-  }
-
-  .videoBox video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-}
-
 #rotateHint {
-  position: fixed;
-  top: 10px;
-  width: 100%;
-  text-align: center;
-  color: #94a3b8;
+  margin-top: 10px;
   font-size: 14px;
-  z-index: 2000;
-  display: none; /* hidden by default */
-}
-
-/* 📱 Show ONLY on mobile portrait */
-@media (max-width: 768px) and (orientation: portrait) {
-  #rotateHint {
-    display: block;
-  }
-}
-#rotateHint {
-  background: rgba(0,0,0,0.5);
-  padding: 6px 0;
+  color: #94a3b8;
+  background: rgba(255,255,255,0.05);
+  padding: 8px 12px;
+  border-radius: 10px;
+  display: inline-block;
   backdrop-filter: blur(10px);
 }
-
