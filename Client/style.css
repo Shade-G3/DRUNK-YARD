@@ -4,6 +4,25 @@ video {
 }
 /* DEFAULT = DESKTOP (keep your current layout) */
 
+@media (max-width: 768px) {
+  #videoContainer {
+    flex-direction: column; /* 🔥 stack vertically */
+    height: 100vh;
+  }
+
+  .videoBox {
+    width: 100%;
+    height: 50vh; /* each takes half screen */
+  }
+
+  .videoBox video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+
 /* MOBILE ONLY */
 @media (max-width: 768px) {
   #videoContainer {
