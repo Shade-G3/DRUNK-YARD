@@ -354,15 +354,23 @@ document.addEventListener("DOMContentLoaded", () => {
     console.log("WINE CLICK WORKED");
     selectCategory("wine");
   };
-});
-document.addEventListener("DOMContentLoaded", () => {
+  // 📱 DEBUG LOGS
+  console.log("Device:", navigator.userAgent);
+  console.log("Touch:", navigator.maxTouchPoints);
+   // 📱 Rotate Hint Logic
   const rotateHint = document.getElementById("rotateHint");
 
-  // Detect mobile screen
-  if (window.innerWidth <= 768) {
-    rotateHint.style.display = "inline-block";
-  }
+  const isMobile =
+    /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
+
+  setTimeout(() => {
+    if (isMobile && rotateHint) {
+      rotateHint.style.display = "inline-block";
+    }
+  }, 100);
 });
+
 
 document.getElementById("chatToggleBtn").onclick = () => {
   const chat = document.getElementById("chatBox");
