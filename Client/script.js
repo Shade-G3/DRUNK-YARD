@@ -109,6 +109,8 @@ socket.on("connect", () => {
 function selectCategory(category) {
   currentCategory = category; 
   console.log("🔥 BUTTON CLICKED:", category);
+  
+  document.getElementById("rotateHint").style.display = "none";
 
   // Hide selection UI
   document.getElementById("selectionScreen").style.display = "none";
@@ -352,6 +354,14 @@ document.addEventListener("DOMContentLoaded", () => {
     console.log("WINE CLICK WORKED");
     selectCategory("wine");
   };
+});
+document.addEventListener("DOMContentLoaded", () => {
+  const rotateHint = document.getElementById("rotateHint");
+
+  // Detect mobile screen
+  if (window.innerWidth <= 768) {
+    rotateHint.style.display = "inline-block";
+  }
 });
 
 document.getElementById("chatToggleBtn").onclick = () => {
