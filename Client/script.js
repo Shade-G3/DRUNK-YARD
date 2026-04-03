@@ -18,6 +18,32 @@ let localStream;
 let peerConnection;
 let roomId;
 
+const nextSound = new Audio("https://www.soundjay.com/buttons/sounds/button-3.mp3");
+
+let searchInterval;
+
+function showSearchingUI() {
+  const status = document.getElementById("status");
+
+  let dots = 0;
+
+  clearInterval(searchInterval);
+
+  status.innerText = "Finding your next vibe 🔍";
+
+  searchInterval = setInterval(() => {
+    dots = (dots + 1) % 4;
+    status.innerText =
+      "Finding your next vibe" + ".".repeat(dots) + " 🔍";
+  }, 300);
+
+  // Clear remote video instantly
+  const remoteVideo = document.getElementById("remoteVideo");
+  if (remoteVideo) {
+    remoteVideo.srcObject = null;
+  }
+}
+
 function resetConnectionState() {
   roomId = null;
 
@@ -26,7 +52,10 @@ function resetConnectionState() {
     peerConnection = null;
   }
 
-  document.getElementById("remoteVideo").srcObject = null;
+  const remoteVideo = document.getElementById("remoteVideo");
+  if (remoteVideo) {
+    remoteVideo.srcObject = null;
+  }
 }
 
 const config = {
@@ -105,6 +134,7 @@ socket.on("no-match-found", () => {
 
 // 🎉 MATCHED
 socket.on("matched", async ({ roomId: id, role }) => {
+  clearInterval(searchInterval);
   console.log("MATCHED:", id, role);
 
 
@@ -196,16 +226,20 @@ function goHome() {
 
  document.getElementById("nextBtn").onclick = () => {
   if (!currentCategory) {
-    console.log("No category selected ❌");
+    console.log("⏭️ Next Clicked");
     return;
   }
+   // 🔊 PLAY SOUND HERE (FIRST LINE AFTER CLICK)  
+  nextSound.play();
+
+   // ⚡ 1. INSTANT UI FEEDBACK
+  showSearchingUI();
 
   resetConnectionState();
-
-  document.getElementById("status").innerText =
-    "Finding next person...";
-
-  socket.emit("next");
+   // 🧠 3. SMALL DELAY (feels smoother, not laggy)
+  setTimeout(() => {
+    socket.emit("next");
+  }, 400); // sweet spot: 300–600ms
 };
 
 // 🔗 CREATE PEER CONNECTION
