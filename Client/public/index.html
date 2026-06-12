@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="DRUNKYARD — real-time anonymous video chat with vibes." />
   <meta name="theme-color" content="#070b18" />
-  <title>DRUNKYARD 🍻</title>
+  <title>DRUNKYARD</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
@@ -16,11 +17,13 @@
   <!-- TOP BAR -->
   <header class="topBar">
     <div class="topBar__brand">
-      <span class="brand-icon">🍻</span>
+      <i class="fa-solid fa-beer-mug-empty brand-icon"></i>
       <span class="brand-name">DRUNKYARD</span>
     </div>
     <div class="topBar__right">
-      <span id="onlineCount" class="pill pill--online">👥 0 online</span>
+      <span id="onlineCount" class="pill pill--online">
+        <i class="fa-solid fa-users"></i> <span id="onlineCountNum">0</span> online
+      </span>
       <span id="status" class="pill pill--status">Choose your vibe</span>
     </div>
   </header>
@@ -30,7 +33,7 @@
     <div class="selection-card">
 
       <div class="selection-header">
-        <h1 class="selection-title">Enter the Yard 🍻</h1>
+        <h1 class="selection-title">Enter the Yard</h1>
         <p class="selection-sub">Pick your drink, vibe, and mode — then connect with real strangers.</p>
       </div>
 
@@ -41,13 +44,34 @@
           What are you drinking?
         </div>
         <div class="filter-grid" id="drinkGrid">
-          <button class="filter-btn" data-group="drink" data-value="whisky"><span>🥃</span><span>Whisky</span></button>
-          <button class="filter-btn" data-group="drink" data-value="rum"><span>🍹</span><span>Rum</span></button>
-          <button class="filter-btn" data-group="drink" data-value="vodka"><span>🍸</span><span>Vodka</span></button>
-          <button class="filter-btn" data-group="drink" data-value="wine"><span>🍷</span><span>Wine</span></button>
-          <button class="filter-btn" data-group="drink" data-value="beer"><span>🍺</span><span>Beer</span></button>
-          <button class="filter-btn" data-group="drink" data-value="sober"><span>💧</span><span>Sober</span></button>
-          <button class="filter-btn filter-btn--wide" data-group="drink" data-value="any"><span>✨</span><span>Any Drink</span></button>
+          <button class="filter-btn" data-group="drink" data-value="whisky">
+            <i class="fa-solid fa-whiskey-glass"></i>
+            <span class="filter-btn-label">Whisky</span>
+          </button>
+          <button class="filter-btn" data-group="drink" data-value="rum">
+            <i class="fa-solid fa-martini-glass-citrus"></i>
+            <span class="filter-btn-label">Rum</span>
+          </button>
+          <button class="filter-btn" data-group="drink" data-value="vodka">
+            <i class="fa-solid fa-martini-glass"></i>
+            <span class="filter-btn-label">Vodka</span>
+          </button>
+          <button class="filter-btn" data-group="drink" data-value="wine">
+            <i class="fa-solid fa-wine-glass"></i>
+            <span class="filter-btn-label">Wine</span>
+          </button>
+          <button class="filter-btn" data-group="drink" data-value="beer">
+            <i class="fa-solid fa-beer-mug-empty"></i>
+            <span class="filter-btn-label">Beer</span>
+          </button>
+          <button class="filter-btn" data-group="drink" data-value="sober">
+            <i class="fa-solid fa-droplet"></i>
+            <span class="filter-btn-label">Sober</span>
+          </button>
+          <button class="filter-btn filter-btn--wide" data-group="drink" data-value="any">
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
+            <span class="filter-btn-label">Any Drink</span>
+          </button>
         </div>
       </div>
 
@@ -58,14 +82,46 @@
           What's your vibe tonight?
         </div>
         <div class="filter-grid" id="vibeGrid">
-          <button class="filter-btn" data-group="vibe" data-value="chill"><span>🌙</span><span>Chill</span><small>Low key, just vibing</small></button>
-          <button class="filter-btn" data-group="vibe" data-value="deep-talk"><span>🧠</span><span>Deep Talk</span><small>Meaningful conversations</small></button>
-          <button class="filter-btn" data-group="vibe" data-value="research"><span>🔬</span><span>Research</span><small>Ideas &amp; knowledge</small></button>
-          <button class="filter-btn" data-group="vibe" data-value="fun"><span>🎉</span><span>Just Fun</span><small>Jokes, laughs, comedy</small></button>
-          <button class="filter-btn" data-group="vibe" data-value="flirt"><span>💘</span><span>Flirty</span><small>Spicy conversations</small></button>
-          <button class="filter-btn" data-group="vibe" data-value="rant"><span>🔥</span><span>Rant Zone</span><small>Vent it all out</small></button>
-          <button class="filter-btn" data-group="vibe" data-value="creative"><span>🎨</span><span>Creative</span><small>Art, music, ideas</small></button>
-          <button class="filter-btn filter-btn--wide" data-group="vibe" data-value="any"><span>🎲</span><span>Any Vibe</span><small>Surprise me</small></button>
+          <button class="filter-btn" data-group="vibe" data-value="chill">
+            <i class="fa-solid fa-moon"></i>
+            <span class="filter-btn-label">Chill</span>
+            <small>Low key, just vibing</small>
+          </button>
+          <button class="filter-btn" data-group="vibe" data-value="deep-talk">
+            <i class="fa-solid fa-comments"></i>
+            <span class="filter-btn-label">Deep Talk</span>
+            <small>Meaningful conversations</small>
+          </button>
+          <button class="filter-btn" data-group="vibe" data-value="research">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <span class="filter-btn-label">Research</span>
+            <small>Ideas &amp; knowledge</small>
+          </button>
+          <button class="filter-btn" data-group="vibe" data-value="fun">
+            <i class="fa-solid fa-face-smile"></i>
+            <span class="filter-btn-label">Just Fun</span>
+            <small>Jokes, laughs, comedy</small>
+          </button>
+          <button class="filter-btn" data-group="vibe" data-value="flirt">
+            <i class="fa-solid fa-heart"></i>
+            <span class="filter-btn-label">Flirty</span>
+            <small>Spicy conversations</small>
+          </button>
+          <button class="filter-btn" data-group="vibe" data-value="rant">
+            <i class="fa-solid fa-bolt"></i>
+            <span class="filter-btn-label">Rant Zone</span>
+            <small>Vent it all out</small>
+          </button>
+          <button class="filter-btn" data-group="vibe" data-value="creative">
+            <i class="fa-solid fa-palette"></i>
+            <span class="filter-btn-label">Creative</span>
+            <small>Art, music, ideas</small>
+          </button>
+          <button class="filter-btn filter-btn--wide" data-group="vibe" data-value="any">
+            <i class="fa-solid fa-dice"></i>
+            <span class="filter-btn-label">Any Vibe</span>
+            <small>Surprise me</small>
+          </button>
         </div>
       </div>
 
@@ -77,13 +133,19 @@
         </div>
         <div class="mode-grid">
           <button class="mode-btn" data-group="mode" data-value="solo">
-            <span class="mode-icon">👤</span>
-            <div class="mode-info"><strong>1-on-1</strong><span>Private chat with one stranger</span></div>
+            <span class="mode-icon"><i class="fa-solid fa-user"></i></span>
+            <div class="mode-info">
+              <strong>1-on-1</strong>
+              <span>Private chat with one stranger</span>
+            </div>
             <span class="mode-badge">Solo</span>
           </button>
           <button class="mode-btn" data-group="mode" data-value="group">
-            <span class="mode-icon">👥</span>
-            <div class="mode-info"><strong>Group Room</strong><span>Up to 6 people, same vibe</span></div>
+            <span class="mode-icon"><i class="fa-solid fa-users"></i></span>
+            <div class="mode-info">
+              <strong>Group Room</strong>
+              <span>Up to 6 people, same vibe</span>
+            </div>
             <span class="mode-badge mode-badge--group">Up to 6</span>
           </button>
         </div>
@@ -92,7 +154,7 @@
       <!-- ENTER BUTTON -->
       <button id="enterBtn" class="enter-btn" disabled>
         <span id="enterBtnText">Select all three to continue</span>
-        <span class="enter-arrow">→</span>
+        <i class="fa-solid fa-arrow-right enter-arrow"></i>
       </button>
 
       <!-- LIVE QUEUE COUNTS -->
@@ -106,29 +168,66 @@
 
     <div class="session-bar">
       <div class="session-left">
-        <span id="sessionVibe" class="session-vibe">🎲 Any Vibe</span>
-        <span id="sessionDrink" class="session-drink">✨ any</span>
+        <span id="sessionVibe" class="session-vibe"></span>
+        <span id="sessionDrink" class="session-drink"></span>
       </div>
       <div class="session-center">
         <span id="sessionTimer" class="session-timer">00:00</span>
       </div>
       <div class="session-right">
-        <button id="muteBtn" class="ctrl-btn" title="Toggle mic">🎤</button>
-        <button id="camBtn"  class="ctrl-btn" title="Toggle camera">📷</button>
-        <button id="chatToggleBtn" class="ctrl-btn" title="Open chat">💬</button>
-        <button id="nextBtn" class="ctrl-btn ctrl-btn--next">Next ⏭</button>
-        <button id="leaveBtn" class="ctrl-btn ctrl-btn--leave">Leave</button>
+        <button id="muteBtn" class="ctrl-btn ctrl-btn--icon" title="Toggle mic">
+          <i class="fa-solid fa-microphone icon-on"></i>
+          <i class="fa-solid fa-microphone-slash icon-off" style="display:none;"></i>
+        </button>
+        <button id="camBtn" class="ctrl-btn ctrl-btn--icon" title="Toggle camera">
+          <i class="fa-solid fa-video icon-on"></i>
+          <i class="fa-solid fa-video-slash icon-off" style="display:none;"></i>
+        </button>
+        <button id="chatToggleBtn" class="ctrl-btn ctrl-btn--icon" title="Toggle chat">
+          <i class="fa-solid fa-message"></i>
+        </button>
+        <button id="nextBtn" class="ctrl-btn ctrl-btn--next">
+          Next <i class="fa-solid fa-forward-step"></i>
+        </button>
+        <button id="leaveBtn" class="ctrl-btn ctrl-btn--leave">
+          Leave <i class="fa-solid fa-right-from-bracket"></i>
+        </button>
       </div>
     </div>
 
-    <div id="videoGrid" class="video-grid peers-1"></div>
+    <div id="videoGrid" class="video-grid layout-1"></div>
 
     <!-- WAITING OVERLAY -->
     <div id="waitingOverlay" class="waiting-overlay" style="display:none;">
       <div class="waiting-content">
         <div class="waiting-spinner"></div>
         <p id="waitingText" class="waiting-text">Searching for your vibe…</p>
-        <button class="ctrl-btn ctrl-btn--leave" onclick="goBack()">Cancel</button>
+        <button class="ctrl-btn ctrl-btn--leave" onclick="goBack()">
+          <i class="fa-solid fa-xmark"></i> Cancel
+        </button>
+      </div>
+    </div>
+
+    <!-- LOCAL PIP — shown when 5 people are in the room -->
+    <div id="localPip" class="pip-tile" style="display:none;">
+      <video autoplay muted playsinline></video>
+      <div class="pip-label">
+        <i class="fa-solid fa-user"></i>
+        <span>You</span>
+      </div>
+      <div class="pip-expand-icon">
+        <i class="fa-solid fa-expand"></i>
+      </div>
+    </div>
+
+    <!-- PIP OVERLAY — center-floated local video (click anywhere to close) -->
+    <div id="pipOverlay" class="pip-overlay" style="display:none;">
+      <div class="pip-overlay__card">
+        <video autoplay muted playsinline></video>
+        <div class="pip-overlay__info">
+          <span class="pip-overlay__title">Your Camera</span>
+          <span class="pip-overlay__hint"><i class="fa-solid fa-xmark"></i> Click anywhere to close</span>
+        </div>
       </div>
     </div>
 
@@ -137,8 +236,8 @@
   <!-- CHAT PANEL -->
   <aside id="chatPanel" class="chat-panel">
     <div class="chat-header">
-      <span>💬 Yard Chat</span>
-      <button id="chatClose" class="chat-close">✕</button>
+      <span><i class="fa-solid fa-comments"></i> Yard Chat</span>
+      <button id="chatClose" class="chat-close"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="chat-messages" id="messages" aria-live="polite"></div>
     <div class="chat-input-row">

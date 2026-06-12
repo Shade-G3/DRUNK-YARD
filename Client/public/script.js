@@ -39,23 +39,32 @@ let sessionStart  = null;
 let timerInterval = null;
 let isMuted       = false;
 let isCamOff      = false;
+let pipMode       = false;
+let pipOverlayOpen = false;
 
 const peers = {}; // peers[peerId] = { pc, stream }
-
 const selected = { drink: null, vibe: null, mode: null };
 
 const VIBE_META = {
-  chill:      { emoji: "🌙", label: "Chill" },
-  "deep-talk":{ emoji: "🧠", label: "Deep Talk" },
-  research:   { emoji: "🔬", label: "Research" },
-  fun:        { emoji: "🎉", label: "Just Fun" },
-  flirt:      { emoji: "💘", label: "Flirty" },
-  rant:       { emoji: "🔥", label: "Rant Zone" },
-  creative:   { emoji: "🎨", label: "Creative" },
-  any:        { emoji: "🎲", label: "Any Vibe" },
+  chill:      { icon: "fa-moon",            label: "Chill" },
+  "deep-talk":{ icon: "fa-comments",        label: "Deep Talk" },
+  research:   { icon: "fa-magnifying-glass",label: "Research" },
+  fun:        { icon: "fa-face-smile",      label: "Just Fun" },
+  flirt:      { icon: "fa-heart",           label: "Flirty" },
+  rant:       { icon: "fa-bolt",            label: "Rant Zone" },
+  creative:   { icon: "fa-palette",         label: "Creative" },
+  any:        { icon: "fa-dice",            label: "Any Vibe" },
 };
 
-const DRINK_EMOJI = { whisky:"🥃", rum:"🍹", vodka:"🍸", wine:"🍷", beer:"🍺", sober:"💧", any:"✨" };
+const DRINK_ICONS = {
+  whisky: "fa-whiskey-glass",
+  rum:    "fa-martini-glass-citrus",
+  vodka:  "fa-martini-glass",
+  wine:   "fa-wine-glass",
+  beer:   "fa-beer-mug-empty",
+  sober:  "fa-droplet",
+  any:    "fa-wand-magic-sparkles",
+};
 
 const $ = id => document.getElementById(id);
 
@@ -64,6 +73,84 @@ function setStatus(msg, live = false) {
   if (!el) return;
   el.textContent = msg;
   el.classList.toggle("live", live);
+}
+
+// ─── PARTICIPANT COUNT ─────────────────────────────────────────────────────
+function getTotalParticipants() {
+  return 1 + Object.keys(peers).length;
+}
+
+// ─── GRID LAYOUT ───────────────────────────────────────────────────────────
+function refreshLayout() {
+  const total = getTotalParticipants();
+
+  // PiP mode: only when exactly 5 people in room
+  if (total === 5) {
+    if (!pipMode) enterPipMode();
+  } else {
+    if (pipMode) exitPipMode();
+  }
+
+  const grid = $("videoGrid");
+  if (grid) grid.className = `video-grid layout-${Math.max(1, total)}`;
+}
+
+// ─── PIP MODE ──────────────────────────────────────────────────────────────
+function enterPipMode() {
+  if (pipMode) return;
+  pipMode = true;
+
+  // Remove local tile from grid
+  const localTile = $("tile-local");
+  if (localTile) localTile.remove();
+
+  // Show PiP with local stream
+  const pip = $("localPip");
+  if (pip) {
+    const pipVideo = pip.querySelector("video");
+    if (pipVideo && localStream) pipVideo.srcObject = localStream;
+    pip.style.display = "flex";
+  }
+}
+
+function exitPipMode() {
+  if (!pipMode) return;
+  pipMode = false;
+  closePipOverlay();
+
+  // Hide PiP
+  const pip = $("localPip");
+  if (pip) pip.style.display = "none";
+
+  // Re-add local tile to grid (first position)
+  if (!$("tile-local")) {
+    const grid = $("videoGrid");
+    if (grid) {
+      const tile = buildLocalTile();
+      grid.insertBefore(tile, grid.firstChild);
+      attachLocalStream();
+    }
+  }
+}
+
+function togglePipOverlay() {
+  if (pipOverlayOpen) closePipOverlay();
+  else openPipOverlay();
+}
+
+function openPipOverlay() {
+  const overlay = $("pipOverlay");
+  if (!overlay) return;
+  const video = overlay.querySelector("video");
+  if (video && localStream) video.srcObject = localStream;
+  overlay.style.display = "flex";
+  pipOverlayOpen = true;
+}
+
+function closePipOverlay() {
+  const overlay = $("pipOverlay");
+  if (overlay) overlay.style.display = "none";
+  pipOverlayOpen = false;
 }
 
 // ─── CAMERA ────────────────────────────────────────────────────────────────
@@ -78,8 +165,8 @@ async function startCamera() {
     return localStream;
   } catch (err) {
     const msg = err.name === "NotAllowedError"
-      ? "⚠️ Camera/mic blocked — allow access and refresh"
-      : "⚠️ Could not access camera: " + err.message;
+      ? "Camera/mic blocked — allow access and refresh"
+      : "Could not access camera: " + err.message;
     setStatus(msg);
     throw err;
   }
@@ -101,7 +188,12 @@ function buildLocalTile() {
   tile.id = "tile-local";
   tile.innerHTML = `
     <video id="localVideo" autoplay muted playsinline></video>
-    <div class="video-tile__label">You <span id="localMutedIcon" class="video-tile__muted-icon" style="display:none;">🔇</span></div>
+    <div class="video-tile__label">
+      <span>You</span>
+      <span id="localMutedIcon" class="video-tile__muted-icon" style="display:none;">
+        <i class="fa-solid fa-microphone-slash"></i>
+      </span>
+    </div>
   `;
   return tile;
 }
@@ -111,18 +203,14 @@ function buildRemoteTile(peerId) {
   tile.className = "video-tile";
   tile.id = `tile-${peerId}`;
   tile.innerHTML = `
-    <div class="video-tile__placeholder"><div class="avatar">👤</div><span>Connecting…</span></div>
+    <div class="video-tile__placeholder">
+      <div class="avatar"><i class="fa-solid fa-user"></i></div>
+      <span>Connecting…</span>
+    </div>
     <video autoplay playsinline style="display:none;"></video>
     <div class="video-tile__label">Stranger·${sanitize(peerId.slice(0,6))}</div>
   `;
   return tile;
-}
-
-function updateGridLayout() {
-  const grid = $("videoGrid");
-  if (!grid) return;
-  const remoteCount = grid.children.length - 1;
-  grid.className = `video-grid peers-${Math.max(1, remoteCount)}`;
 }
 
 function attachStreamToTile(peerId, stream) {
@@ -137,7 +225,6 @@ function attachStreamToTile(peerId, stream) {
 function removeTile(peerId) {
   const tile = $(`tile-${peerId}`);
   if (tile) tile.remove();
-  updateGridLayout();
 }
 
 // ─── PEER CONNECTION ───────────────────────────────────────────────────────
@@ -210,7 +297,7 @@ async function enterRoom() {
   try { await startCamera(); } catch { return; }
   showVideoRoom();
   showWaiting("Searching for your vibe…");
-  setStatus("🔍 Searching…");
+  setStatus("Searching…");
   updateSessionBar();
   socket.emit("join", { drink: selected.drink, vibe: selected.vibe, mode: selected.mode });
 }
@@ -220,12 +307,13 @@ function showVideoRoom() {
   $("videoRoom").style.display = "flex";
   const grid = $("videoGrid");
   grid.innerHTML = "";
+  grid.className = "video-grid layout-1";
   grid.appendChild(buildLocalTile());
   attachLocalStream();
-  updateGridLayout();
 }
 
 function showSelectionScreen() {
+  if (pipMode) exitPipMode();
   hideWaiting();
   $("videoRoom").style.display       = "none";
   $("selectionScreen").style.display = "flex";
@@ -237,11 +325,11 @@ function showSelectionScreen() {
 }
 
 function updateSessionBar() {
-  const vm = VIBE_META[selected.vibe] || { emoji: "🎲", label: selected.vibe };
-  const de = DRINK_EMOJI[selected.drink] || "";
+  const vm = VIBE_META[selected.vibe] || { icon: "fa-dice", label: selected.vibe || "Any Vibe" };
+  const di = DRINK_ICONS[selected.drink] || "fa-droplet";
   const sv = $("sessionVibe"), sd = $("sessionDrink");
-  if (sv) sv.textContent = `${vm.emoji} ${vm.label}`;
-  if (sd) sd.textContent = `${de} ${selected.drink}`;
+  if (sv) sv.innerHTML = `<i class="fa-solid ${vm.icon}"></i> ${vm.label}`;
+  if (sd) sd.innerHTML = `<i class="fa-solid ${di}"></i> ${selected.drink || "any"}`;
 }
 
 function startTimer() {
@@ -265,9 +353,11 @@ function handlePeerLeft(peerId) {
   if (!peers[peerId]) return;
   closePeer(peerId);
   removeTile(peerId);
+  refreshLayout(); // handles PiP exit if room drops below 5
   addSystemMessage("A stranger left the yard.");
+  const total = getTotalParticipants();
   if (sessionMode === "solo") setTimeout(goBack, 1800);
-  else setStatus(`🔴 Live · ${Object.keys(peers).length + 1} people`, true);
+  else setStatus(`Live · ${total} ${total === 1 ? "person" : "people"}`, true);
 }
 
 function toggleMute() {
@@ -275,7 +365,11 @@ function toggleMute() {
   isMuted = !isMuted;
   localStream.getAudioTracks().forEach(t => { t.enabled = !isMuted; });
   const btn = $("muteBtn"), icon = $("localMutedIcon");
-  if (btn)  { btn.textContent = isMuted ? "🔇" : "🎤"; btn.classList.toggle("ctrl-btn--muted", isMuted); }
+  if (btn) {
+    btn.classList.toggle("ctrl-btn--muted", isMuted);
+    btn.querySelector(".icon-on").style.display  = isMuted ? "none" : "";
+    btn.querySelector(".icon-off").style.display = isMuted ? ""     : "none";
+  }
   if (icon) icon.style.display = isMuted ? "inline" : "none";
 }
 
@@ -284,10 +378,15 @@ function toggleCam() {
   isCamOff = !isCamOff;
   localStream.getVideoTracks().forEach(t => { t.enabled = !isCamOff; });
   const btn = $("camBtn");
-  if (btn) { btn.textContent = isCamOff ? "📷🚫" : "📷"; btn.classList.toggle("ctrl-btn--muted", isCamOff); }
+  if (btn) {
+    btn.classList.toggle("ctrl-btn--muted", isCamOff);
+    btn.querySelector(".icon-on").style.display  = isCamOff ? "none" : "";
+    btn.querySelector(".icon-off").style.display = isCamOff ? ""     : "none";
+  }
 }
 
 function goBack() {
+  if (pipMode) exitPipMode();
   const wasInRoom = !!roomId;
   roomId = null; sessionMode = null;
   closeAllPeers(); stopTimer(); hideWaiting();
@@ -297,13 +396,16 @@ function goBack() {
 
 function doNext() {
   if (sessionMode === "group") { goBack(); return; }
+  if (pipMode) exitPipMode();
   closeAllPeers(); stopTimer();
   const grid = $("videoGrid");
-  if (grid) [...grid.querySelectorAll(".video-tile:not(.video-tile__local)")].forEach(t => t.remove());
-  updateGridLayout();
+  if (grid) {
+    [...grid.querySelectorAll(".video-tile:not(.video-tile__local)")].forEach(t => t.remove());
+    grid.className = "video-grid layout-1";
+  }
   socket.emit("next");
   showWaiting("Finding someone new…");
-  setStatus("🔍 Finding someone new…");
+  setStatus("Finding someone new…");
   socket.emit("join", { drink: selected.drink, vibe: selected.vibe, mode: selected.mode });
 }
 
@@ -357,9 +459,13 @@ function addSystemMessage(msg) {
 
 // ─── SOCKET EVENTS ─────────────────────────────────────────────────────────
 socket.on("connect",       ()  => setStatus("Choose your vibe"));
-socket.on("connect_error", ()  => setStatus("⚠️ Reconnecting…"));
+socket.on("connect_error", ()  => setStatus("Reconnecting…"));
 socket.on("reconnect",     ()  => setStatus("Choose your vibe"));
-socket.on("online-count",  n   => { const el = $("onlineCount"); if (el) el.textContent = `👥 ${n} online`; });
+
+socket.on("online-count", n => {
+  const el = $("onlineCountNum");
+  if (el) el.textContent = n;
+});
 
 socket.on("queue-stats", stats => {
   const c = $("liveCounts");
@@ -370,37 +476,41 @@ socket.on("queue-stats", stats => {
     const [drink, vibe] = key.split("__");
     const pill = document.createElement("span");
     pill.className = "count-pill";
-    pill.textContent = `${DRINK_EMOJI[drink]||""}${VIBE_META[vibe]?.emoji||""} ${count} waiting`;
+    const di = DRINK_ICONS[drink] || "";
+    const vi = VIBE_META[vibe]?.icon || "";
+    pill.innerHTML = `<i class="fa-solid ${di}"></i> <i class="fa-solid ${vi}"></i> ${count} waiting`;
     c.appendChild(pill);
   }
 });
 
-socket.on("waiting",       ({ message }) => { showWaiting(message); setStatus("⏳ " + (message||"Searching…")); });
-socket.on("no-match-found",()            => { hideWaiting(); setStatus("No match found — try a different vibe?"); showSelectionScreen(); });
-socket.on("error",         ({ message }) => { hideWaiting(); setStatus("⚠️ " + (message||"Something went wrong")); });
+socket.on("waiting",        ({ message }) => { showWaiting(message); setStatus(message || "Searching…"); });
+socket.on("no-match-found", ()            => { hideWaiting(); setStatus("No match found — try a different vibe?"); showSelectionScreen(); });
+socket.on("error",          ({ message }) => { hideWaiting(); setStatus(message || "Something went wrong"); });
 
 socket.on("matched", async ({ roomId: id, role, mode, peers: peerIds }) => {
   roomId = id; sessionMode = mode;
   hideWaiting();
-  setStatus(`🔴 Live · ${mode === "group" ? `${peerIds.length + 1} people` : "1-on-1"}`, true);
+  setStatus(`Live · ${mode === "group" ? `${peerIds.length + 1} people` : "1-on-1"}`, true);
   updateSessionBar();
   startTimer();
   if (!localStream) { try { await startCamera(); } catch { return; } }
   attachLocalStream();
   const grid = $("videoGrid");
   for (const peerId of peerIds) {
-    if (!$(`tile-${peerId}`)) { grid.appendChild(buildRemoteTile(peerId)); updateGridLayout(); }
+    if (!$(`tile-${peerId}`)) grid.appendChild(buildRemoteTile(peerId));
     if (role === "caller" || role === "joiner") await callPeer(peerId);
   }
+  refreshLayout();
   addSystemMessage(`You joined the yard. ${peerIds.length} ${peerIds.length === 1 ? "stranger" : "strangers"} here.`);
 });
 
 socket.on("peer-joined", async ({ peerId }) => {
   const grid = $("videoGrid");
-  if (grid && !$(`tile-${peerId}`)) { grid.appendChild(buildRemoteTile(peerId)); updateGridLayout(); }
+  if (grid && !$(`tile-${peerId}`)) grid.appendChild(buildRemoteTile(peerId));
   createPeer(peerId);
+  refreshLayout();
   addSystemMessage("Someone just walked into the yard.");
-  setStatus(`🔴 Live · ${Object.keys(peers).length + 1} people`, true);
+  setStatus(`Live · ${getTotalParticipants()} people`, true);
 });
 
 socket.on("peer-left", ({ peerId }) => handlePeerLeft(peerId));
@@ -410,7 +520,7 @@ socket.on("signal", async ({ fromId, data }) => {
     if (!localStream) { try { await startCamera(); } catch { return; } }
     createPeer(fromId);
     const grid = $("videoGrid");
-    if (grid && !$(`tile-${fromId}`)) { grid.appendChild(buildRemoteTile(fromId)); updateGridLayout(); }
+    if (grid && !$(`tile-${fromId}`)) { grid.appendChild(buildRemoteTile(fromId)); refreshLayout(); }
   }
   const pc = peers[fromId]?.pc;
   if (!pc) return;
@@ -436,6 +546,7 @@ socket.on("chat-message", ({ fromId, message }) => addChatMessage(message, fromI
 // ─── DOM READY ─────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
 
+  // Filter / mode selection
   document.querySelectorAll(".filter-btn, .mode-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const group = btn.dataset.group, value = btn.dataset.value;
@@ -452,12 +563,14 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  // Session controls
   $("enterBtn")?.addEventListener("click", enterRoom);
-  $("muteBtn")?.addEventListener("click", toggleMute);
-  $("camBtn")?.addEventListener("click",  toggleCam);
+  $("muteBtn")?.addEventListener("click",  toggleMute);
+  $("camBtn")?.addEventListener("click",   toggleCam);
   $("leaveBtn")?.addEventListener("click", goBack);
   $("nextBtn")?.addEventListener("click",  doNext);
 
+  // Chat
   $("chatToggleBtn")?.addEventListener("click", () => $("chatPanel")?.classList.toggle("open"));
   $("chatClose")?.addEventListener("click",     () => $("chatPanel")?.classList.remove("open"));
   $("chatSendBtn")?.addEventListener("click",   sendMessage);
@@ -468,5 +581,10 @@ document.addEventListener("DOMContentLoaded", () => {
     chatInput.addEventListener("input",   () => updateCharCount(chatInput.value.length));
   }
 
-  startCamera().catch(() => {}); // pre-warm permission
+  // PiP controls
+  $("localPip")?.addEventListener("click",   togglePipOverlay);
+  $("pipOverlay")?.addEventListener("click", closePipOverlay);
+
+  // Pre-warm camera permission
+  startCamera().catch(() => {});
 });
