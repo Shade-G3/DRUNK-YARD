@@ -1,24 +1,22 @@
 {
-  "name": "DRUNK-CHAT",
-  "version": "1.0.0",
-  "description": "Real-time Chatroulette-style video chat app using WebRTC and Socket.io",
-  "main": "server/server.js",
+  "name": "drunkyard-server",
+  "version": "2.0.0",
+  "description": "DRUNKYARD — real-time anonymous video chat server (WebRTC + Socket.IO)",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
-  "keywords": [
-    "webrtc",
-    "socket.io",
-    "video-chat",
-    "chatroulette",
-    "real-time"
-  ],
+  "keywords": ["webrtc", "socket.io", "video-chat", "anonymous", "real-time"],
   "author": "Gopal Shukla",
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
+    "cors":      "^2.8.5",
+    "express":   "^4.18.2",
+    "helmet":    "^8.2.0",
     "socket.io": "^4.7.5"
   },
   "devDependencies": {

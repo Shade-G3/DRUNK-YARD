@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="DRUNKYARD — real-time anonymous video chat with vibes." />
+  <meta name="theme-color" content="#070b18" />
+  <title>DRUNKYARD 🍻</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+
+  <!-- TOP BAR -->
+  <header class="topBar">
+    <div class="topBar__brand">
+      <span class="brand-icon">🍻</span>
+      <span class="brand-name">DRUNKYARD</span>
+    </div>
+    <div class="topBar__right">
+      <span id="onlineCount" class="pill pill--online">👥 0 online</span>
+      <span id="status" class="pill pill--status">Choose your vibe</span>
+    </div>
+  </header>
+
+  <!-- SELECTION SCREEN -->
+  <section id="selectionScreen" class="selection-screen">
+    <div class="selection-card">
+
+      <div class="selection-header">
+        <h1 class="selection-title">Enter the Yard 🍻</h1>
+        <p class="selection-sub">Pick your drink, vibe, and mode — then connect with real strangers.</p>
+      </div>
+
+      <!-- STEP 1: DRINK -->
+      <div class="filter-section">
+        <div class="filter-label">
+          <span class="filter-step">1</span>
+          What are you drinking?
+        </div>
+        <div class="filter-grid" id="drinkGrid">
+          <button class="filter-btn" data-group="drink" data-value="whisky"><span>🥃</span><span>Whisky</span></button>
+          <button class="filter-btn" data-group="drink" data-value="rum"><span>🍹</span><span>Rum</span></button>
+          <button class="filter-btn" data-group="drink" data-value="vodka"><span>🍸</span><span>Vodka</span></button>
+          <button class="filter-btn" data-group="drink" data-value="wine"><span>🍷</span><span>Wine</span></button>
+          <button class="filter-btn" data-group="drink" data-value="beer"><span>🍺</span><span>Beer</span></button>
+          <button class="filter-btn" data-group="drink" data-value="sober"><span>💧</span><span>Sober</span></button>
+          <button class="filter-btn filter-btn--wide" data-group="drink" data-value="any"><span>✨</span><span>Any Drink</span></button>
+        </div>
+      </div>
+
+      <!-- STEP 2: VIBE -->
+      <div class="filter-section">
+        <div class="filter-label">
+          <span class="filter-step">2</span>
+          What's your vibe tonight?
+        </div>
+        <div class="filter-grid" id="vibeGrid">
+          <button class="filter-btn" data-group="vibe" data-value="chill"><span>🌙</span><span>Chill</span><small>Low key, just vibing</small></button>
+          <button class="filter-btn" data-group="vibe" data-value="deep-talk"><span>🧠</span><span>Deep Talk</span><small>Meaningful conversations</small></button>
+          <button class="filter-btn" data-group="vibe" data-value="research"><span>🔬</span><span>Research</span><small>Ideas &amp; knowledge</small></button>
+          <button class="filter-btn" data-group="vibe" data-value="fun"><span>🎉</span><span>Just Fun</span><small>Jokes, laughs, comedy</small></button>
+          <button class="filter-btn" data-group="vibe" data-value="flirt"><span>💘</span><span>Flirty</span><small>Spicy conversations</small></button>
+          <button class="filter-btn" data-group="vibe" data-value="rant"><span>🔥</span><span>Rant Zone</span><small>Vent it all out</small></button>
+          <button class="filter-btn" data-group="vibe" data-value="creative"><span>🎨</span><span>Creative</span><small>Art, music, ideas</small></button>
+          <button class="filter-btn filter-btn--wide" data-group="vibe" data-value="any"><span>🎲</span><span>Any Vibe</span><small>Surprise me</small></button>
+        </div>
+      </div>
+
+      <!-- STEP 3: MODE -->
+      <div class="filter-section">
+        <div class="filter-label">
+          <span class="filter-step">3</span>
+          Session type?
+        </div>
+        <div class="mode-grid">
+          <button class="mode-btn" data-group="mode" data-value="solo">
+            <span class="mode-icon">👤</span>
+            <div class="mode-info"><strong>1-on-1</strong><span>Private chat with one stranger</span></div>
+            <span class="mode-badge">Solo</span>
+          </button>
+          <button class="mode-btn" data-group="mode" data-value="group">
+            <span class="mode-icon">👥</span>
+            <div class="mode-info"><strong>Group Room</strong><span>Up to 6 people, same vibe</span></div>
+            <span class="mode-badge mode-badge--group">Up to 6</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ENTER BUTTON -->
+      <button id="enterBtn" class="enter-btn" disabled>
+        <span id="enterBtnText">Select all three to continue</span>
+        <span class="enter-arrow">→</span>
+      </button>
+
+      <!-- LIVE QUEUE COUNTS -->
+      <div id="liveCounts" class="live-counts" aria-live="polite"></div>
+
+    </div>
+  </section>
+
+  <!-- VIDEO ROOM -->
+  <section id="videoRoom" class="video-room" style="display:none;">
+
+    <div class="session-bar">
+      <div class="session-left">
+        <span id="sessionVibe" class="session-vibe">🎲 Any Vibe</span>
+        <span id="sessionDrink" class="session-drink">✨ any</span>
+      </div>
+      <div class="session-center">
+        <span id="sessionTimer" class="session-timer">00:00</span>
+      </div>
+      <div class="session-right">
+        <button id="muteBtn" class="ctrl-btn" title="Toggle mic">🎤</button>
+        <button id="camBtn"  class="ctrl-btn" title="Toggle camera">📷</button>
+        <button id="chatToggleBtn" class="ctrl-btn" title="Open chat">💬</button>
+        <button id="nextBtn" class="ctrl-btn ctrl-btn--next">Next ⏭</button>
+        <button id="leaveBtn" class="ctrl-btn ctrl-btn--leave">Leave</button>
+      </div>
+    </div>
+
+    <div id="videoGrid" class="video-grid peers-1"></div>
+
+    <!-- WAITING OVERLAY -->
+    <div id="waitingOverlay" class="waiting-overlay" style="display:none;">
+      <div class="waiting-content">
+        <div class="waiting-spinner"></div>
+        <p id="waitingText" class="waiting-text">Searching for your vibe…</p>
+        <button class="ctrl-btn ctrl-btn--leave" onclick="goBack()">Cancel</button>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- CHAT PANEL -->
+  <aside id="chatPanel" class="chat-panel">
+    <div class="chat-header">
+      <span>💬 Yard Chat</span>
+      <button id="chatClose" class="chat-close">✕</button>
+    </div>
+    <div class="chat-messages" id="messages" aria-live="polite"></div>
+    <div class="chat-input-row">
+      <input id="chatInput" type="text" placeholder="Say something…" maxlength="500" autocomplete="off" />
+      <button id="chatSendBtn">Send</button>
+    </div>
+    <div class="chat-char-count"><span id="chatCharCount">0</span>/500</div>
+  </aside>
+
+  <!-- ABOUT -->
+  <div id="aboutSection">
+    <h2>The Philosophy of the Yard</h2>
+    <p class="manifesto">
+      In a world of "likes," algorithms, and perfectly curated feeds, we lost something vital: <strong>The Unfiltered Night.</strong>
+      DRUNKYARD is a digital tavern — the virtual version of those 2 AM conversations where ego disappears,
+      guards come down, and truth comes out.
+    </p>
+    <div class="content-grid">
+      <div class="column">
+        <h3>Why We're Here</h3>
+        <ul>
+          <li><strong>Zero Polish, All Soul:</strong> We care about what you have to say right now, not your profile picture.</li>
+          <li><strong>Real-Time, Real Human:</strong> Powered by WebRTC — no delays, no "seen" receipts, just raw dialogue.</li>
+          <li><strong>The "Backyard" Vibe:</strong> Ideas too wild for LinkedIn, too honest for Instagram.</li>
+        </ul>
+      </div>
+      <div class="column">
+        <h3>The Yard Rules</h3>
+        <ul>
+          <li><strong>Be Authentic:</strong> Bring your realest self.</li>
+          <li><strong>Respect the Space:</strong> "Drunk" honesty, not "drunk" hostility.</li>
+          <li><strong>Leave it on the Floor:</strong> What happens in the Yard stays in the Yard.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="yardFooter">
+      <blockquote>
+        "The best conversations don't happen in boardrooms or on stages. They happen in the yard, late at night, when everyone else is asleep."
+        <cite>— The DRUNKYARD Team</cite>
+      </blockquote>
+    </div>
+    <p class="techStack">Built with WebRTC · Socket.IO · Vanilla JS · Deployed on Render</p>
+  </div>
+
+  <!-- CONTACT -->
+  <div id="contactSection">
+    <h3>Contact</h3>
+    <p>Email: <a href="mailto:gopalshukla2257@gmail.com">gopalshukla2257@gmail.com</a></p>
+    <p>LinkedIn: <a href="https://linkedin.com/in/gopal-shukla-7b8202147/" target="_blank" rel="noopener">gopal-shukla-7b8202147</a></p>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="./script.js"></script>
+</body>
+</html>

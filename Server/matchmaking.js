@@ -1,55 +1,94 @@
+/**
+ * matchmaking.js — Filter-aware matchmaking utility
+ * Primary logic lives in server.js; this class is for unit testing.
+ */
+
+const MAX_ROOM_SIZE = 6;
+
 class Matchmaking {
   constructor() {
-    this.waitingQueue = [];
-    this.activeRooms = new Map();
+    this.queues      = {};
+    this.activeRooms = {};
   }
 
-  // Add user to queue
-  addUser(socket) {
-    this.waitingQueue.push(socket);
+  static queueKey({ drink, vibe, mode }) {
+    return `${drink}__${vibe}__${mode}`;
   }
 
-  // Remove user (disconnect / skip)
-  removeUser(socket) {
-    this.waitingQueue = this.waitingQueue.filter(
-      (user) => user.id !== socket.id
-    );
+  enqueue(socket) {
+    const key = socket.data?.queueKey;
+    if (!key) throw new Error("Socket has no queueKey set");
+    if (!this.queues[key]) this.queues[key] = [];
+    this.queues[key].push(socket);
+  }
 
-    // Also remove from active room if exists
-    for (let [roomId, users] of this.activeRooms.entries()) {
-      if (users.includes(socket.id)) {
-        this.activeRooms.delete(roomId);
-      }
+  dequeue(socket) {
+    const key = socket.data?.queueKey;
+    if (!key || !this.queues[key]) return;
+    this.queues[key] = this.queues[key].filter(s => s.id !== socket.id);
+    if (this.queues[key].length === 0) delete this.queues[key];
+  }
+
+  matchSolo(socket) {
+    const key   = socket.data?.queueKey;
+    const queue = this.queues[key];
+    if (!queue || queue.length === 0) return null;
+
+    const partner = queue.shift();
+    if (queue.length === 0) delete this.queues[key];
+
+    const roomId = `room_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    this.activeRooms[roomId] = { sockets: new Set([socket.id, partner.id]), mode: "solo", key };
+    socket.data.roomId  = roomId;
+    partner.data.roomId = roomId;
+    return { partner, roomId };
+  }
+
+  matchGroup(socket) {
+    const key = socket.data?.queueKey;
+
+    for (const [roomId, room] of Object.entries(this.activeRooms)) {
+      if (room.mode !== "group" || room.key !== key || room.sockets.size >= MAX_ROOM_SIZE) continue;
+      const existingPeers = [...room.sockets];
+      room.sockets.add(socket.id);
+      socket.data.roomId = roomId;
+      return { existingPeers, roomId, isNew: false };
     }
+
+    const queue = this.queues[key];
+    if (!queue || queue.length < 1) return null;
+
+    const roomId  = `room_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const members = [socket, ...queue.splice(0, MAX_ROOM_SIZE - 1)];
+    if (queue.length === 0) delete this.queues[key];
+
+    const memberIds = members.map(s => s.id);
+    this.activeRooms[roomId] = { sockets: new Set(memberIds), mode: "group", key };
+    members.forEach(s => { s.data.roomId = roomId; });
+    return { members, roomId, isNew: true };
   }
 
-  // Try matching users
-  matchUsers() {
-    if (this.waitingQueue.length >= 2) {
-      const user1 = this.waitingQueue.shift();
-      const user2 = this.waitingQueue.shift();
-
-      const roomId = `${user1.id}#${user2.id}`;
-
-      this.activeRooms.set(roomId, [user1.id, user2.id]);
-
-      return { user1, user2, roomId };
-    }
-    return null;
+  removeFromRoom(socketId, roomId) {
+    const room = this.activeRooms[roomId];
+    if (!room) return [];
+    room.sockets.delete(socketId);
+    if (room.sockets.size === 0) { delete this.activeRooms[roomId]; return []; }
+    return [...room.sockets];
   }
 
-  // Get partner socket id
+  removeRoom(roomId) { delete this.activeRooms[roomId]; }
+
   getPartner(roomId, socketId) {
-    const users = this.activeRooms.get(roomId);
-    if (!users) return null;
-
-    return users.find((id) => id !== socketId);
+    const room = this.activeRooms[roomId];
+    if (!room) return null;
+    return [...room.sockets].find(id => id !== socketId) || null;
   }
 
-  // Remove room (on disconnect / skip)
-  removeRoom(roomId) {
-    this.activeRooms.delete(roomId);
+  getQueueStats() {
+    const stats = {};
+    for (const [k, q] of Object.entries(this.queues)) { if (q.length) stats[k] = q.length; }
+    return stats;
   }
 }
 
-module.exports = new Matchmaking();
+module.exports = Matchmaking;
