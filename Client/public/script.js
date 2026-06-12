@@ -32,18 +32,28 @@ const ICE_CONFIG = {
 };
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
-let localStream   = null;
-let roomId        = null;
-let sessionMode   = null;
-let sessionStart  = null;
-let timerInterval = null;
-let isMuted       = false;
-let isCamOff      = false;
-let pipMode       = false;
-let pipOverlayOpen = false;
+let localStream      = null;
+let roomId           = null;
+let sessionMode      = null;
+let sessionStart     = null;
+let timerInterval    = null;
+let isMuted          = false;
+let isCamOff         = false;
+let pipMode          = false;
+let pipOverlayOpen   = false;
 
-const peers = {}; // peers[peerId] = { pc, stream }
-const selected = { drink: null, vibe: null, mode: null };
+// Queue / fallback
+let queueTimeoutTimer = null;    // 10s timer to show fallback modal
+
+// Vibe-match voting
+let myVibeMatchClicked = false;  // did I click the button?
+let vibeMatchVoteCount = 0;      // how many others have voted (excluding me)
+let vibeMatchTotalRoom = 2;      // room size (to compute denominator)
+let vibeMatchCanvas    = null;   // captured canvas, kept for download
+
+const peers         = {};  // peers[peerId] = { pc, stream }
+const selected      = { drink: null, vibe: null, mode: null };
+const peerFiltersMap = {}; // peerId → { drink, vibe, mode }
 
 const VIBE_META = {
   chill:      { icon: "fa-moon",            label: "Chill" },
@@ -75,22 +85,18 @@ function setStatus(msg, live = false) {
   el.classList.toggle("live", live);
 }
 
-// ─── PARTICIPANT COUNT ─────────────────────────────────────────────────────
+// ─── PARTICIPANT COUNT + LAYOUT ────────────────────────────────────────────
 function getTotalParticipants() {
   return 1 + Object.keys(peers).length;
 }
 
-// ─── GRID LAYOUT ───────────────────────────────────────────────────────────
 function refreshLayout() {
   const total = getTotalParticipants();
-
-  // PiP mode: only when exactly 5 people in room
   if (total === 5) {
     if (!pipMode) enterPipMode();
   } else {
     if (pipMode) exitPipMode();
   }
-
   const grid = $("videoGrid");
   if (grid) grid.className = `video-grid layout-${Math.max(1, total)}`;
 }
@@ -99,12 +105,8 @@ function refreshLayout() {
 function enterPipMode() {
   if (pipMode) return;
   pipMode = true;
-
-  // Remove local tile from grid
   const localTile = $("tile-local");
   if (localTile) localTile.remove();
-
-  // Show PiP with local stream
   const pip = $("localPip");
   if (pip) {
     const pipVideo = pip.querySelector("video");
@@ -117,12 +119,8 @@ function exitPipMode() {
   if (!pipMode) return;
   pipMode = false;
   closePipOverlay();
-
-  // Hide PiP
   const pip = $("localPip");
   if (pip) pip.style.display = "none";
-
-  // Re-add local tile to grid (first position)
   if (!$("tile-local")) {
     const grid = $("videoGrid");
     if (grid) {
@@ -213,6 +211,38 @@ function buildRemoteTile(peerId) {
   return tile;
 }
 
+// Show the peer's vibe/drink in the top-left of their tile.
+// Highlights "different" vibes so both people know they crossed vibes.
+function updateTileVibe(peerId) {
+  const tile = $(`tile-${peerId}`);
+  if (!tile) return;
+
+  const filters = peerFiltersMap[peerId];
+  if (!filters) return;
+
+  // Remove previous badge if any
+  tile.querySelector(".tile-vibe-badge")?.remove();
+
+  const badge = document.createElement("div");
+  badge.className = "tile-vibe-badge";
+
+  const vm = VIBE_META[filters.vibe] || { icon: "fa-dice", label: filters.vibe || "any" };
+
+  // "Different vibe" = neither side chose "any", and vibes are different
+  const isDiffVibe = filters.vibe !== selected.vibe
+    && filters.vibe  !== "any"
+    && selected.vibe !== "any";
+
+  badge.innerHTML = `<i class="fa-solid ${vm.icon}"></i> ${vm.label}`;
+  if (isDiffVibe) badge.classList.add("tile-vibe-badge--different");
+
+  tile.appendChild(badge);
+}
+
+function clearPeerFilters() {
+  for (const k of Object.keys(peerFiltersMap)) delete peerFiltersMap[k];
+}
+
 function attachStreamToTile(peerId, stream) {
   const tile = $(`tile-${peerId}`);
   if (!tile) return;
@@ -291,6 +321,212 @@ function hideWaiting() {
   if (o) o.style.display = "none";
 }
 
+// ─── QUEUE TIMEOUT (10s) ───────────────────────────────────────────────────
+function startQueueTimeout() {
+  clearQueueTimeout();
+  queueTimeoutTimer = setTimeout(() => {
+    queueTimeoutTimer = null;
+    if (!roomId) showFallbackModal(); // still searching
+  }, 10_000);
+}
+
+function clearQueueTimeout() {
+  if (queueTimeoutTimer) { clearTimeout(queueTimeoutTimer); queueTimeoutTimer = null; }
+}
+
+// ─── FALLBACK MODAL ────────────────────────────────────────────────────────
+function showFallbackModal() {
+  const m = $("fallbackModal");
+  if (m) m.style.display = "flex";
+}
+
+function hideFallbackModal() {
+  const m = $("fallbackModal");
+  if (m) m.style.display = "none";
+}
+
+function fallbackWait() {
+  // Stay in queue, just dismiss the modal
+  hideFallbackModal();
+}
+
+function fallbackJoinAny() {
+  hideFallbackModal();
+  clearQueueTimeout();
+  // Leave current queue, rejoin with any/any (keep same mode)
+  socket.emit("next");
+  socket.emit("join", { drink: "any", vibe: "any", mode: selected.mode });
+  startQueueTimeout();
+  showWaiting("Looking for anyone available…");
+  setStatus("Joining any vibe…");
+}
+
+// ─── VIBE MATCH BUTTON ─────────────────────────────────────────────────────
+function showVibeMatchBtn() {
+  const btn = $("vibeMatchBtn");
+  if (btn) btn.style.display = "";
+}
+
+function hideVibeMatchBtn() {
+  const btn = $("vibeMatchBtn");
+  if (!btn) return;
+  btn.style.display = "none";
+  myVibeMatchClicked = false;
+  vibeMatchVoteCount = 0;
+  btn.classList.remove("ctrl-btn--voted");
+  const label = btn.querySelector(".vibe-match-label");
+  if (label) label.textContent = "Vibe Match";
+}
+
+function updateVibeMatchBtn() {
+  const btn = $("vibeMatchBtn");
+  if (!btn) return;
+  const label = btn.querySelector(".vibe-match-label");
+  if (myVibeMatchClicked) {
+    btn.classList.add("ctrl-btn--voted");
+    const myVote = 1;
+    const otherVotes = vibeMatchVoteCount;
+    const total = vibeMatchTotalRoom;
+    if (label) label.textContent = `${myVote + otherVotes}/${total} voted`;
+  } else {
+    btn.classList.remove("ctrl-btn--voted");
+    if (vibeMatchVoteCount > 0) {
+      if (label) label.textContent = `${vibeMatchVoteCount} voted — click!`;
+    } else {
+      if (label) label.textContent = "Vibe Match";
+    }
+  }
+}
+
+function requestVibeMatch() {
+  if (!roomId || myVibeMatchClicked) return;
+  myVibeMatchClicked = true;
+  socket.emit("vibe-match-request", { roomId });
+  updateVibeMatchBtn();
+
+  // Update in-room progress toast
+  showVibeMatchProgress();
+}
+
+function showVibeMatchProgress() {
+  const el = $("vibeMatchProgress");
+  if (!el) return;
+  el.style.display = "flex";
+  const text = $("vibeMatchProgressText");
+  const voted = (myVibeMatchClicked ? 1 : 0) + vibeMatchVoteCount;
+  if (text) text.textContent = `${voted}/${vibeMatchTotalRoom} voted for Vibe Match…`;
+}
+
+function hideVibeMatchProgress() {
+  const el = $("vibeMatchProgress");
+  if (el) el.style.display = "none";
+}
+
+// ─── SCREENSHOT CAPTURE ────────────────────────────────────────────────────
+function roundRectPath(ctx, x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+async function captureVibeMatchedScreenshot() {
+  const grid = $("videoGrid");
+  const tiles = [...grid.querySelectorAll(".video-tile")];
+
+  const gridRect = grid.getBoundingClientRect();
+  const W = Math.floor(gridRect.width)  || 800;
+  const H = Math.floor(gridRect.height) || 600;
+
+  const canvas = document.createElement("canvas");
+  canvas.width  = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+
+  // Background
+  ctx.fillStyle = "#020612";
+  ctx.fillRect(0, 0, W, H);
+
+  for (const tile of tiles) {
+    const video    = tile.querySelector("video");
+    const tileRect = tile.getBoundingClientRect();
+    const gap = 6;
+    const x = Math.floor(tileRect.left - gridRect.left) + gap;
+    const y = Math.floor(tileRect.top  - gridRect.top)  + gap;
+    const w = Math.floor(tileRect.width)  - gap * 2;
+    const h = Math.floor(tileRect.height) - gap * 2;
+    if (w <= 0 || h <= 0) continue;
+
+    // Tile background
+    ctx.fillStyle = "#010409";
+    ctx.beginPath();
+    roundRectPath(ctx, x, y, w, h, 10);
+    ctx.fill();
+
+    // Video frame
+    if (video && video.readyState >= 2 && video.videoWidth > 0) {
+      try {
+        ctx.save();
+        ctx.beginPath();
+        roundRectPath(ctx, x, y, w, h, 10);
+        ctx.clip();
+        ctx.drawImage(video, x, y, w, h);
+        ctx.restore();
+      } catch (_) { /* video frame not available */ }
+    }
+  }
+
+  // Subtle cyan tint overlay
+  ctx.fillStyle = "rgba(56,189,248,0.06)";
+  ctx.fillRect(0, 0, W, H);
+
+  // Watermark strip
+  const stamp = `DRUNKYARD · Vibe Matched · ${new Date().toLocaleString()}`;
+  const fSize = Math.max(11, Math.round(W * 0.016));
+  ctx.font = `600 ${fSize}px Inter, sans-serif`;
+  const textW = ctx.measureText(stamp).width + 20;
+  ctx.fillStyle = "rgba(0,0,0,0.62)";
+  ctx.fillRect(W / 2 - textW / 2, H - fSize * 2.2, textW, fSize * 1.9);
+  ctx.fillStyle = "rgba(255,255,255,.88)";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(stamp, W / 2, H - fSize * 1.3);
+
+  return canvas;
+}
+
+// ─── VIBE MATCHED MODAL ────────────────────────────────────────────────────
+async function showVibeMatchedModal(canvas) {
+  const modal = $("vibeMatchedModal");
+  if (!modal) return;
+
+  const img = $("vibeMatchedImg");
+  if (img) img.src = canvas.toDataURL("image/png");
+
+  const dlBtn = $("vibeMatchDownloadBtn");
+  if (dlBtn) {
+    dlBtn.onclick = () => {
+      const a = document.createElement("a");
+      a.href     = canvas.toDataURL("image/png");
+      a.download = `drunkyard-vibe-match-${Date.now()}.png`;
+      a.click();
+    };
+  }
+
+  modal.style.display = "flex";
+}
+
+function closeVibeMatchedModal() {
+  const modal = $("vibeMatchedModal");
+  if (modal) modal.style.display = "none";
+}
+
 // ─── ROOM FLOW ─────────────────────────────────────────────────────────────
 async function enterRoom() {
   if (!selected.drink || !selected.vibe || !selected.mode) return;
@@ -299,7 +535,10 @@ async function enterRoom() {
   showWaiting("Searching for your vibe…");
   setStatus("Searching…");
   updateSessionBar();
+  // Apply vibe room theme — triggers CSS [data-vibe] overrides
+  $("videoRoom").dataset.vibe = selected.vibe || "any";
   socket.emit("join", { drink: selected.drink, vibe: selected.vibe, mode: selected.mode });
+  startQueueTimeout();
 }
 
 function showVideoRoom() {
@@ -314,14 +553,21 @@ function showVideoRoom() {
 
 function showSelectionScreen() {
   if (pipMode) exitPipMode();
+  clearQueueTimeout();
+  hideFallbackModal();
+  hideVibeMatchBtn();
+  hideVibeMatchProgress();
+  closeVibeMatchedModal();
   hideWaiting();
   $("videoRoom").style.display       = "none";
+  $("videoRoom").removeAttribute("data-vibe");  // reset vibe theme
   $("selectionScreen").style.display = "flex";
   stopTimer();
   setStatus("Choose your vibe");
   const msgs = $("messages");
   if (msgs) msgs.innerHTML = "";
   $("chatPanel")?.classList.remove("open");
+  clearPeerFilters();
 }
 
 function updateSessionBar() {
@@ -353,11 +599,17 @@ function handlePeerLeft(peerId) {
   if (!peers[peerId]) return;
   closePeer(peerId);
   removeTile(peerId);
-  refreshLayout(); // handles PiP exit if room drops below 5
+  delete peerFiltersMap[peerId];
+  refreshLayout();
   addSystemMessage("A stranger left the yard.");
   const total = getTotalParticipants();
   if (sessionMode === "solo") setTimeout(goBack, 1800);
-  else setStatus(`Live · ${total} ${total === 1 ? "person" : "people"}`, true);
+  else {
+    setStatus(`Live · ${total} ${total === 1 ? "person" : "people"}`, true);
+    // Recalculate room size for vibe-match denominator
+    vibeMatchTotalRoom = total;
+    updateVibeMatchBtn();
+  }
 }
 
 function toggleMute() {
@@ -387,6 +639,7 @@ function toggleCam() {
 
 function goBack() {
   if (pipMode) exitPipMode();
+  clearQueueTimeout();
   const wasInRoom = !!roomId;
   roomId = null; sessionMode = null;
   closeAllPeers(); stopTimer(); hideWaiting();
@@ -397,6 +650,10 @@ function goBack() {
 function doNext() {
   if (sessionMode === "group") { goBack(); return; }
   if (pipMode) exitPipMode();
+  clearQueueTimeout();
+  clearPeerFilters();
+  hideVibeMatchBtn();
+  hideVibeMatchProgress();
   closeAllPeers(); stopTimer();
   const grid = $("videoGrid");
   if (grid) {
@@ -404,9 +661,10 @@ function doNext() {
     grid.className = "video-grid layout-1";
   }
   socket.emit("next");
+  socket.emit("join", { drink: selected.drink, vibe: selected.vibe, mode: selected.mode });
   showWaiting("Finding someone new…");
   setStatus("Finding someone new…");
-  socket.emit("join", { drink: selected.drink, vibe: selected.vibe, mode: selected.mode });
+  startQueueTimeout();
 }
 
 // ─── CHAT ──────────────────────────────────────────────────────────────────
@@ -483,38 +741,120 @@ socket.on("queue-stats", stats => {
   }
 });
 
-socket.on("waiting",        ({ message }) => { showWaiting(message); setStatus(message || "Searching…"); });
-socket.on("no-match-found", ()            => { hideWaiting(); setStatus("No match found — try a different vibe?"); showSelectionScreen(); });
-socket.on("error",          ({ message }) => { hideWaiting(); setStatus(message || "Something went wrong"); });
+socket.on("waiting", ({ message }) => {
+  showWaiting(message);
+  setStatus(message || "Searching…");
+});
 
-socket.on("matched", async ({ roomId: id, role, mode, peers: peerIds }) => {
-  roomId = id; sessionMode = mode;
+socket.on("no-match-found", () => {
+  clearQueueTimeout();
   hideWaiting();
+  setStatus("No match found — try a different vibe?");
+  showSelectionScreen();
+});
+
+socket.on("error", ({ message }) => {
+  clearQueueTimeout();
+  hideWaiting();
+  setStatus(message || "Something went wrong");
+});
+
+socket.on("matched", async ({ roomId: id, role, mode, peers: peerIds, peerFilters: pf }) => {
+  roomId = id; sessionMode = mode;
+  clearQueueTimeout();
+  hideFallbackModal();
+  hideWaiting();
+
+  // Store peer filters for vibe badge display
+  if (pf) {
+    for (const [peerId, filters] of Object.entries(pf)) {
+      peerFiltersMap[peerId] = filters;
+    }
+  }
+
+  vibeMatchTotalRoom = 1 + peerIds.length;
+  myVibeMatchClicked = false;
+  vibeMatchVoteCount = 0;
+
   setStatus(`Live · ${mode === "group" ? `${peerIds.length + 1} people` : "1-on-1"}`, true);
   updateSessionBar();
   startTimer();
+
   if (!localStream) { try { await startCamera(); } catch { return; } }
   attachLocalStream();
+
   const grid = $("videoGrid");
   for (const peerId of peerIds) {
     if (!$(`tile-${peerId}`)) grid.appendChild(buildRemoteTile(peerId));
+    updateTileVibe(peerId); // show vibe badge
     if (role === "caller" || role === "joiner") await callPeer(peerId);
   }
+
   refreshLayout();
+  showVibeMatchBtn();
   addSystemMessage(`You joined the yard. ${peerIds.length} ${peerIds.length === 1 ? "stranger" : "strangers"} here.`);
+
+  // Notify if this was a cross-vibe match
+  if (pf) {
+    const diffVibes = Object.values(pf).filter(f =>
+      f.vibe !== selected.vibe && f.vibe !== "any" && selected.vibe !== "any"
+    );
+    if (diffVibes.length > 0) {
+      addSystemMessage("Matched across vibes — their vibe is shown in the corner.");
+    }
+  }
 });
 
-socket.on("peer-joined", async ({ peerId }) => {
+socket.on("peer-joined", async ({ peerId, filters }) => {
   const grid = $("videoGrid");
   if (grid && !$(`tile-${peerId}`)) grid.appendChild(buildRemoteTile(peerId));
   createPeer(peerId);
+
+  if (filters) {
+    peerFiltersMap[peerId] = filters;
+    updateTileVibe(peerId);
+  }
+
+  vibeMatchTotalRoom = getTotalParticipants();
   refreshLayout();
   addSystemMessage("Someone just walked into the yard.");
   setStatus(`Live · ${getTotalParticipants()} people`, true);
+  updateVibeMatchBtn();
 });
 
 socket.on("peer-left", ({ peerId }) => handlePeerLeft(peerId));
 
+// ─── VIBE MATCH EVENTS ─────────────────────────────────────────────────────
+
+// Another person in the room voted but not everyone has yet
+socket.on("vibe-match-vote", ({ count, total }) => {
+  vibeMatchVoteCount = myVibeMatchClicked ? count - 1 : count;
+  vibeMatchTotalRoom = total;
+  updateVibeMatchBtn();
+  showVibeMatchProgress();
+});
+
+// ALL people voted — take screenshot and show modal
+socket.on("vibe-matched", async () => {
+  hideVibeMatchProgress();
+  hideVibeMatchBtn();
+
+  try {
+    vibeMatchCanvas = await captureVibeMatchedScreenshot();
+    await showVibeMatchedModal(vibeMatchCanvas);
+  } catch (err) {
+    console.error("Screenshot failed:", err);
+    addSystemMessage("Vibe matched! (Screenshot unavailable in this browser.)");
+  }
+
+  // Reset vote state (conversation continues)
+  myVibeMatchClicked = false;
+  vibeMatchVoteCount = 0;
+  showVibeMatchBtn(); // re-show so they can match again
+  updateVibeMatchBtn();
+});
+
+// ─── SIGNAL ────────────────────────────────────────────────────────────────
 socket.on("signal", async ({ fromId, data }) => {
   if (!peers[fromId]) {
     if (!localStream) { try { await startCamera(); } catch { return; } }
@@ -564,11 +904,16 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Session controls
-  $("enterBtn")?.addEventListener("click", enterRoom);
-  $("muteBtn")?.addEventListener("click",  toggleMute);
-  $("camBtn")?.addEventListener("click",   toggleCam);
-  $("leaveBtn")?.addEventListener("click", goBack);
-  $("nextBtn")?.addEventListener("click",  doNext);
+  $("enterBtn")?.addEventListener("click",    enterRoom);
+  $("muteBtn")?.addEventListener("click",     toggleMute);
+  $("camBtn")?.addEventListener("click",      toggleCam);
+  $("leaveBtn")?.addEventListener("click",    goBack);
+  $("nextBtn")?.addEventListener("click",     doNext);
+  $("vibeMatchBtn")?.addEventListener("click", requestVibeMatch);
+
+  // Fallback modal buttons
+  $("fallbackWaitBtn")?.addEventListener("click", fallbackWait);
+  $("fallbackJoinBtn")?.addEventListener("click",  fallbackJoinAny);
 
   // Chat
   $("chatToggleBtn")?.addEventListener("click", () => $("chatPanel")?.classList.toggle("open"));
