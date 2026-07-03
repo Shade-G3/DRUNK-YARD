@@ -12,24 +12,28 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map(s => s.trim())
   : [
       "http://localhost:3000",
+      "http://localhost:4000",
       "http://localhost:5500",
       "https://drunk-yard.onrender.com",
-      // add your Vercel/Netlify/GitHub-Pages frontend URL here
     ];
 
 const MAX_MESSAGE_LENGTH     = 500;
 const MAX_QUEUE_SIZE         = 200;
-const RATE_LIMIT_WINDOW      = 10_000;  // 10 s
+const RATE_LIMIT_WINDOW      = 10_000;
 const RATE_LIMIT_MAX_MSGS    = 20;
-const MAX_CONNECTIONS_PER_IP = 5;
+const MAX_CONNECTIONS_PER_IP = 20;
 const MAX_ROOM_SIZE          = 6;
-const QUEUE_TIMEOUT_MS       = 120_000; // 2 min
+const QUEUE_TIMEOUT_MS       = 120_000; // 2 min (client shows 10s UI prompt)
 const IP_CONN_WINDOW_MS      = 60_000;
 
 // ─── FILTER TAXONOMY ───────────────────────────────────────────────────────
 const VALID_DRINKS = new Set(["whisky", "rum", "vodka", "wine", "beer", "sober", "any"]);
 const VALID_VIBES  = new Set(["chill", "deep-talk", "research", "fun", "flirt", "rant", "creative", "any"]);
 const VALID_MODES  = new Set(["solo", "group"]);
+
+// Arrays used for wildcard expansion
+const VALID_DRINKS_ARR = ["whisky", "rum", "vodka", "wine", "beer", "sober", "any"];
+const VALID_VIBES_ARR  = ["chill", "deep-talk", "research", "fun", "flirt", "rant", "creative", "any"];
 
 function isValidFilters({ drink, vibe, mode }) {
   return (
@@ -43,6 +47,42 @@ function queueKey({ drink, vibe, mode }) {
   return `${drink}__${vibe}__${mode}`;
 }
 
+// ─── WILDCARD COMPATIBILITY ────────────────────────────────────────────────
+// "any" acts as a wildcard: matches any concrete value AND other "any"s.
+// Two values d1/d2 are compatible if: d1 === d2 || d1 === "any" || d2 === "any"
+
+function areKeysCompatible(key1, key2) {
+  const [d1, v1] = key1.split("__");
+  const [d2, v2] = key2.split("__");
+  const drinkOk = d1 === d2 || d1 === "any" || d2 === "any";
+  const vibeOk  = v1 === v2 || v1 === "any" || v2 === "any";
+  return drinkOk && vibeOk;
+}
+
+// Returns all queue keys (for the given mode) that could hold a compatible partner.
+// Exact key first, then "any"-expanded variants.
+function getCompatibleQueueKeys(drink, vibe, mode) {
+  // Which drink values in a queue are compatible with me?
+  const matchDrinks = drink === "any" ? VALID_DRINKS_ARR : [drink, "any"];
+  // Which vibe values in a queue are compatible with me?
+  const matchVibes  = vibe  === "any" ? VALID_VIBES_ARR  : [vibe,  "any"];
+
+  const seen = new Set();
+  const keys = [];
+  // Put exact key first so we always prefer exact matches
+  const exact = `${drink}__${vibe}__${mode}`;
+  seen.add(exact);
+  keys.push(exact);
+
+  for (const d of matchDrinks) {
+    for (const v of matchVibes) {
+      const k = `${d}__${v}__${mode}`;
+      if (!seen.has(k)) { seen.add(k); keys.push(k); }
+    }
+  }
+  return keys;
+}
+
 // ─── STATE ─────────────────────────────────────────────────────────────────
 let onlineUsers = 0;
 
@@ -51,6 +91,9 @@ const queues = {};
 
 // rooms[roomId] = { sockets: Set<socketId>, mode, key }
 const rooms = {};
+
+// vibeMatchVotes[roomId] = Set<socketId> — tracks who clicked "Vibe Match"
+const vibeMatchVotes = {};
 
 // ipConnections[ip] = [timestamp, ...]
 const ipConnections = {};
@@ -129,7 +172,13 @@ function cleanupSocket(socket, isNext = false) {
 
     if (room.sockets.size === 0) {
       delete rooms[roomId];
+      delete vibeMatchVotes[roomId]; // clean up vibe-match votes
     } else {
+      // Remove this socket from any pending vibe-match vote
+      if (vibeMatchVotes[roomId]) {
+        vibeMatchVotes[roomId].delete(socket.id);
+        if (vibeMatchVotes[roomId].size === 0) delete vibeMatchVotes[roomId];
+      }
       console.log(`Room ${roomId}: ${room.sockets.size} members remaining`);
     }
   }
@@ -151,72 +200,124 @@ function checkIpLimit(ip) {
 }
 
 // ─── SOLO MATCH ────────────────────────────────────────────────────────────
+// Searches compatible queues (exact first, then "any"-wildcard variants).
 function trySoloMatch(socket, key) {
-  const queue = getQueue(key);
-  if (queue.length === 0) return false;
+  const { drink, vibe } = socket.data.filters;
+  const compatibleKeys = getCompatibleQueueKeys(drink, vibe, "solo");
 
-  const partner = queue.shift();
-  if (queue.length === 0) delete queues[key];
+  for (const k of compatibleKeys) {
+    const queue = queues[k];
+    if (!queue || queue.length === 0) continue;
 
-  const roomId = `room_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  socket.data.roomId  = roomId;
-  partner.data.roomId = roomId;
-  rooms[roomId] = { sockets: new Set([socket.id, partner.id]), mode: "solo", key };
+    const partner = queue.shift();
+    if (queue.length === 0) delete queues[k];
+    if (partner.data.queueTimer) { clearTimeout(partner.data.queueTimer); partner.data.queueTimer = null; }
 
-  socket.join(roomId);
-  partner.join(roomId);
+    const roomId = `room_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    socket.data.roomId  = roomId;
+    partner.data.roomId = roomId;
+    rooms[roomId] = { sockets: new Set([socket.id, partner.id]), mode: "solo", key };
 
-  io.to(socket.id).emit("matched",  { roomId, role: "caller",   mode: "solo", peers: [partner.id], filters: socket.data.filters });
-  io.to(partner.id).emit("matched", { roomId, role: "receiver", mode: "solo", peers: [socket.id],  filters: partner.data.filters });
+    socket.join(roomId);
+    partner.join(roomId);
 
-  console.log(`✅ Solo: ${socket.id.slice(0,8)} ↔ ${partner.id.slice(0,8)} [${key}]`);
-  return true;
+    io.to(socket.id).emit("matched", {
+      roomId, role: "caller", mode: "solo", peers: [partner.id],
+      filters:     socket.data.filters,
+      peerFilters: { [partner.id]: partner.data.filters },
+    });
+    io.to(partner.id).emit("matched", {
+      roomId, role: "receiver", mode: "solo", peers: [socket.id],
+      filters:     partner.data.filters,
+      peerFilters: { [socket.id]: socket.data.filters },
+    });
+
+    console.log(`✅ Solo: ${socket.id.slice(0,8)} ↔ ${partner.id.slice(0,8)} [${k}]`);
+    return true;
+  }
+
+  return false;
 }
 
 // ─── GROUP MATCH ───────────────────────────────────────────────────────────
 function tryGroupMatch(socket, key) {
-  // Join an existing open room
-  for (const [roomId, room] of Object.entries(rooms)) {
-    if (room.mode !== "group" || room.key !== key || room.sockets.size >= MAX_ROOM_SIZE) continue;
+  const { drink, vibe } = socket.data.filters;
+
+  // 1. Try to join an existing open room with a compatible key (exact first)
+  // Sort: exact key rooms first
+  const roomEntries = Object.entries(rooms).sort(([idA, rA], [idB, rB]) => {
+    const exactA = rA.key === key ? 0 : 1;
+    const exactB = rB.key === key ? 0 : 1;
+    return exactA - exactB;
+  });
+
+  for (const [roomId, room] of roomEntries) {
+    if (room.mode !== "group" || room.sockets.size >= MAX_ROOM_SIZE) continue;
+    if (!areKeysCompatible(key, room.key)) continue;
+
     const existingPeers = [...room.sockets];
     room.sockets.add(socket.id);
     socket.data.roomId = roomId;
     socket.join(roomId);
-    io.to(socket.id).emit("matched", { roomId, role: "joiner", mode: "group", peers: existingPeers, filters: socket.data.filters });
-    socket.to(roomId).emit("peer-joined", { peerId: socket.id, roomId });
-    console.log(`✅ Group join: ${socket.id.slice(0,8)} → ${roomId} (${room.sockets.size} members) [${key}]`);
+
+    // Build peerFilters map for the joiner
+    const peerFilters = {};
+    for (const peerId of existingPeers) {
+      const peerSock = io.sockets.sockets.get(peerId);
+      if (peerSock) peerFilters[peerId] = peerSock.data.filters;
+    }
+
+    io.to(socket.id).emit("matched", {
+      roomId, role: "joiner", mode: "group", peers: existingPeers,
+      filters:     socket.data.filters,
+      peerFilters,
+    });
+    socket.to(roomId).emit("peer-joined", {
+      peerId: socket.id, roomId,
+      filters: socket.data.filters,
+    });
+    console.log(`✅ Group join: ${socket.id.slice(0,8)} → ${roomId} (${room.sockets.size}) [${key}→${room.key}]`);
     return true;
   }
 
-  // Form a new room from the queue
-  const queue = getQueue(key);
-  if (queue.length < 1) return false;
+  // 2. Form a new room from compatible queues (exact key queue first)
+  const compatibleKeys = getCompatibleQueueKeys(drink, vibe, "group");
 
-  const roomId  = `room_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  const members = [socket, ...queue.splice(0, MAX_ROOM_SIZE - 1)];
-  if (queue.length === 0) delete queues[key];
+  for (const k of compatibleKeys) {
+    const queue = queues[k];
+    if (!queue || queue.length === 0) continue;
 
-  const memberIds = members.map(s => s.id);
-  rooms[roomId] = { sockets: new Set(memberIds), mode: "group", key };
+    const roomId  = `room_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const members = [socket, ...queue.splice(0, MAX_ROOM_SIZE - 1)];
+    if (queue.length === 0) delete queues[k];
 
-  members.forEach(s => {
-    s.data.roomId = roomId;
-    s.join(roomId);
-    if (s.data.queueTimer) { clearTimeout(s.data.queueTimer); s.data.queueTimer = null; }
-  });
+    const memberIds = members.map(s => s.id);
+    rooms[roomId] = { sockets: new Set(memberIds), mode: "group", key: k };
 
-  members.forEach((s, i) => {
-    io.to(s.id).emit("matched", {
-      roomId,
-      role:    i === 0 ? "caller" : "receiver",
-      mode:    "group",
-      peers:   memberIds.filter(id => id !== s.id),
-      filters: s.data.filters,
+    members.forEach(s => {
+      s.data.roomId = roomId;
+      s.join(roomId);
+      if (s.data.queueTimer) { clearTimeout(s.data.queueTimer); s.data.queueTimer = null; }
     });
-  });
 
-  console.log(`✅ Group formed: ${roomId} — ${members.length} members [${key}]`);
-  return true;
+    members.forEach((s, i) => {
+      const peerFilters = {};
+      members.filter(m => m.id !== s.id).forEach(m => { peerFilters[m.id] = m.data.filters; });
+      io.to(s.id).emit("matched", {
+        roomId,
+        role:        i === 0 ? "caller" : "receiver",
+        mode:        "group",
+        peers:       memberIds.filter(id => id !== s.id),
+        filters:     s.data.filters,
+        peerFilters,
+      });
+    });
+
+    console.log(`✅ Group formed: ${roomId} — ${members.length} members [${k}]`);
+    return true;
+  }
+
+  return false;
 }
 
 // ─── SOCKET HANDLERS ───────────────────────────────────────────────────────
@@ -236,6 +337,7 @@ io.on("connection", (socket) => {
 
   let msgCount = 0, rateLimitTimer = null;
 
+  // ── join ──────────────────────────────────────────────────────────────────
   socket.on("join", (payload) => {
     if (!payload || typeof payload !== "object") { socket.emit("error", { message: "Invalid request." }); return; }
     const { drink, vibe, mode } = payload;
@@ -265,6 +367,7 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ── signal ────────────────────────────────────────────────────────────────
   socket.on("signal", (payload) => {
     if (!payload || typeof payload !== "object") return;
     const { roomId, targetId, data } = payload;
@@ -278,6 +381,7 @@ io.on("connection", (socket) => {
     io.to(targetId).emit("signal", { fromId: socket.id, data });
   });
 
+  // ── chat-message ──────────────────────────────────────────────────────────
   socket.on("chat-message", (payload) => {
     if (!payload || typeof payload !== "object") return;
     const { roomId, message } = payload;
@@ -291,8 +395,35 @@ io.on("connection", (socket) => {
     socket.to(roomId).emit("chat-message", { fromId: socket.id, message: safe });
   });
 
+  // ── vibe-match-request ────────────────────────────────────────────────────
+  // When a user clicks "Vibe Match", vote is recorded.
+  // When all room members have voted → emit "vibe-matched" to the whole room.
+  socket.on("vibe-match-request", ({ roomId: rid } = {}) => {
+    if (!rid || socket.data.roomId !== rid) return;
+    const room = rooms[rid];
+    if (!room) return;
+
+    if (!vibeMatchVotes[rid]) vibeMatchVotes[rid] = new Set();
+    vibeMatchVotes[rid].add(socket.id);
+
+    const voteCount = vibeMatchVotes[rid].size;
+    const total     = room.sockets.size;
+
+    // Tell everyone else in the room that someone voted (for live counter)
+    socket.to(rid).emit("vibe-match-vote", { fromId: socket.id, count: voteCount, total });
+
+    // All members voted → fire!
+    if (voteCount >= total) {
+      io.to(rid).emit("vibe-matched");
+      delete vibeMatchVotes[rid];
+      console.log(`⚡ Vibe matched in room ${rid}`);
+    }
+  });
+
+  // ── next ──────────────────────────────────────────────────────────────────
   socket.on("next", () => cleanupSocket(socket, true));
 
+  // ── disconnect ────────────────────────────────────────────────────────────
   socket.on("disconnect", (reason) => {
     console.log(`🔴 ${socket.id.slice(0,8)} disconnected (${reason})`);
     if (rateLimitTimer) clearTimeout(rateLimitTimer);

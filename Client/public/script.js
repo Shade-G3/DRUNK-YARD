@@ -11,19 +11,30 @@ const socket = io("https://drunk-yard.onrender.com", {
 // ─── ICE CONFIG ────────────────────────────────────────────────────────────
 const ICE_CONFIG = {
   iceServers: [
+    // STUN — multiple servers for redundancy
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:stun.cloudflare.com:3478" },
+    // TURN — openrelay (free public relay, last resort)
+    // turns: (TLS port 443) punches through most corporate firewalls
     {
       urls: [
         "turn:openrelay.metered.ca:80",
         "turn:openrelay.metered.ca:443",
-        "turn:openrelay.metered.ca:443?transport=tcp",
+        "turns:openrelay.metered.ca:443",      // TLS — best NAT traversal
         "turn:openrelay.metered.ca:80?transport=tcp",
       ],
       username: "openrelayproject",
       credential: "openrelayproject",
+    },
+    // TURN — numb.viagenie.ca (secondary free relay)
+    {
+      urls: "turn:numb.viagenie.ca",
+      username: "webrtc@live.com",
+      credential: "muazkh",
     },
   ],
   iceCandidatePoolSize: 10,
@@ -44,6 +55,8 @@ let pipOverlayOpen   = false;
 
 // Queue / fallback
 let queueTimeoutTimer = null;    // 10s timer to show fallback modal
+let peerLeftTimer     = null;    // solo-mode: timer to auto-goBack when peer leaves
+let isWaiting         = false;   // true while searching (between join and matched)
 
 // Vibe-match voting
 let myVibeMatchClicked = false;  // did I click the button?
@@ -51,9 +64,10 @@ let vibeMatchVoteCount = 0;      // how many others have voted (excluding me)
 let vibeMatchTotalRoom = 2;      // room size (to compute denominator)
 let vibeMatchCanvas    = null;   // captured canvas, kept for download
 
-const peers         = {};  // peers[peerId] = { pc, stream }
-const selected      = { drink: null, vibe: null, mode: null };
-const peerFiltersMap = {}; // peerId → { drink, vibe, mode }
+const peers            = {};  // peers[peerId] = { pc, stream }
+const pendingCandidates = {}; // peerId → RTCIceCandidate[] buffered before remoteDescription is set
+const selected         = { drink: null, vibe: null, mode: null };
+const peerFiltersMap   = {}; // peerId → { drink, vibe, mode }
 
 const VIBE_META = {
   chill:      { icon: "fa-moon",            label: "Chill" },
@@ -261,29 +275,63 @@ function removeTile(peerId) {
 function createPeer(peerId) {
   if (peers[peerId]) return peers[peerId].pc;
   const pc = new RTCPeerConnection(ICE_CONFIG);
-  peers[peerId] = { pc, stream: null };
+  peers[peerId]            = { pc, stream: null };
+  pendingCandidates[peerId] = []; // buffer for candidates that arrive before remoteDescription
 
   if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
 
-  pc.ontrack = ({ streams }) => {
-    if (!streams[0]) return;
-    peers[peerId].stream = streams[0];
-    attachStreamToTile(peerId, streams[0]);
+  // FIX: some browsers (especially mobile Safari) fire ontrack with streams[] empty.
+  // Instead of bailing, build a MediaStream from event.track directly.
+  pc.ontrack = (event) => {
+    const incoming = event.streams?.[0];
+    if (incoming) {
+      peers[peerId].stream = incoming;
+      attachStreamToTile(peerId, incoming);
+    } else {
+      // No stream attached — assemble one from the raw track
+      if (!peers[peerId].stream) peers[peerId].stream = new MediaStream();
+      peers[peerId].stream.addTrack(event.track);
+      attachStreamToTile(peerId, peers[peerId].stream);
+    }
   };
 
   pc.onicecandidate = ({ candidate }) => {
-    if (candidate && roomId) socket.emit("signal", { roomId, targetId: peerId, data: candidate.toJSON() });
+    if (candidate && roomId) {
+      socket.emit("signal", { roomId, targetId: peerId, data: candidate.toJSON() });
+    }
   };
 
+  // Log connection states to console so issues are diagnosable
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === "failed") pc.restartIce();
+    console.log(`[WebRTC] ${peerId.slice(0,8)} → ${pc.connectionState}`);
+    if (pc.connectionState === "failed") {
+      console.warn(`[WebRTC] Restarting ICE for ${peerId.slice(0,8)}`);
+      pc.restartIce();
+    }
+    // Media-flow watchdog: if connected but tile still shows placeholder, renegotiate
+    if (pc.connectionState === "connected") {
+      setTimeout(() => {
+        const tile = $(`tile-${peerId}`);
+        const placeholder = tile?.querySelector(".video-tile__placeholder");
+        if (placeholder && placeholder.style.display !== "none") {
+          console.warn(`[WebRTC] Connected but no media for ${peerId.slice(0,8)}, renegotiating`);
+          pc.restartIce();
+        }
+      }, 5000);
+    }
   };
 
   pc.oniceconnectionstatechange = () => {
-    if (pc.iceConnectionState === "failed") pc.restartIce();
+    console.log(`[ICE] ${peerId.slice(0,8)} → ${pc.iceConnectionState}`);
+    if (pc.iceConnectionState === "failed") {
+      console.warn(`[ICE] Failed for ${peerId.slice(0,8)}, restarting`);
+      pc.restartIce();
+    }
     if (pc.iceConnectionState === "disconnected") {
       setTimeout(() => {
-        if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") handlePeerLeft(peerId);
+        if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+          handlePeerLeft(peerId);
+        }
       }, 6000);
     }
   };
@@ -305,6 +353,7 @@ function closePeer(peerId) {
   if (!entry) return;
   try { entry.pc.close(); } catch (_) {}
   delete peers[peerId];
+  delete pendingCandidates[peerId]; // clean up buffered candidates
 }
 
 function closeAllPeers() { Object.keys(peers).forEach(closePeer); }
@@ -356,6 +405,7 @@ function fallbackJoinAny() {
   // Leave current queue, rejoin with any/any (keep same mode)
   socket.emit("next");
   socket.emit("join", { drink: "any", vibe: "any", mode: selected.mode });
+  isWaiting = true;
   startQueueTimeout();
   showWaiting("Looking for anyone available…");
   setStatus("Joining any vibe…");
@@ -538,6 +588,7 @@ async function enterRoom() {
   // Apply vibe room theme — triggers CSS [data-vibe] overrides
   $("videoRoom").dataset.vibe = selected.vibe || "any";
   socket.emit("join", { drink: selected.drink, vibe: selected.vibe, mode: selected.mode });
+  isWaiting = true;
   startQueueTimeout();
 }
 
@@ -559,6 +610,12 @@ function showSelectionScreen() {
   hideVibeMatchProgress();
   closeVibeMatchedModal();
   hideWaiting();
+  isWaiting = false;
+  // Stop camera tracks — camera light should be off on the selection screen
+  if (localStream) {
+    localStream.getTracks().forEach(t => t.stop());
+    localStream = null;
+  }
   $("videoRoom").style.display       = "none";
   $("videoRoom").removeAttribute("data-vibe");  // reset vibe theme
   $("selectionScreen").style.display = "flex";
@@ -603,7 +660,7 @@ function handlePeerLeft(peerId) {
   refreshLayout();
   addSystemMessage("A stranger left the yard.");
   const total = getTotalParticipants();
-  if (sessionMode === "solo") setTimeout(goBack, 1800);
+  if (sessionMode === "solo") peerLeftTimer = setTimeout(goBack, 1800);
   else {
     setStatus(`Live · ${total} ${total === 1 ? "person" : "people"}`, true);
     // Recalculate room size for vibe-match denominator
@@ -640,6 +697,7 @@ function toggleCam() {
 function goBack() {
   if (pipMode) exitPipMode();
   clearQueueTimeout();
+  if (peerLeftTimer) { clearTimeout(peerLeftTimer); peerLeftTimer = null; }
   const wasInRoom = !!roomId;
   roomId = null; sessionMode = null;
   closeAllPeers(); stopTimer(); hideWaiting();
@@ -651,10 +709,12 @@ function doNext() {
   if (sessionMode === "group") { goBack(); return; }
   if (pipMode) exitPipMode();
   clearQueueTimeout();
+  if (peerLeftTimer) { clearTimeout(peerLeftTimer); peerLeftTimer = null; }
   clearPeerFilters();
   hideVibeMatchBtn();
   hideVibeMatchProgress();
   closeAllPeers(); stopTimer();
+  roomId = null; sessionMode = null; // clear stale room state so stale ICE signals don't leak
   const grid = $("videoGrid");
   if (grid) {
     [...grid.querySelectorAll(".video-tile:not(.video-tile__local)")].forEach(t => t.remove());
@@ -662,6 +722,7 @@ function doNext() {
   }
   socket.emit("next");
   socket.emit("join", { drink: selected.drink, vibe: selected.vibe, mode: selected.mode });
+  isWaiting = true;
   showWaiting("Finding someone new…");
   setStatus("Finding someone new…");
   startQueueTimeout();
@@ -718,7 +779,29 @@ function addSystemMessage(msg) {
 // ─── SOCKET EVENTS ─────────────────────────────────────────────────────────
 socket.on("connect",       ()  => setStatus("Choose your vibe"));
 socket.on("connect_error", ()  => setStatus("Reconnecting…"));
-socket.on("reconnect",     ()  => setStatus("Choose your vibe"));
+
+// On reconnect the server has already cleaned up rooms and queues.
+// If we were in a room or mid-session, bail out to selection screen.
+// If we were searching (no room yet), re-emit join so we re-enter the queue.
+socket.on("reconnect", () => {
+  clearQueueTimeout();
+  if (roomId || sessionMode) {
+    // Server destroyed the room — clean up and send user back
+    closeAllPeers();
+    stopTimer();
+    roomId = null; sessionMode = null;
+    showSelectionScreen();
+    setTimeout(() => setStatus("Reconnected — start a new session"), 50);
+  } else if (isWaiting && selected.drink && selected.vibe && selected.mode) {
+    // Was in the queue — re-join automatically
+    socket.emit("join", { drink: selected.drink, vibe: selected.vibe, mode: selected.mode });
+    startQueueTimeout();
+    showWaiting("Reconnected, still searching…");
+    setStatus("Searching…");
+  } else {
+    setStatus("Choose your vibe");
+  }
+});
 
 socket.on("online-count", n => {
   const el = $("onlineCountNum");
@@ -757,10 +840,13 @@ socket.on("error", ({ message }) => {
   clearQueueTimeout();
   hideWaiting();
   setStatus(message || "Something went wrong");
+  // Give them 2.5s to read the error, then return to selection screen
+  setTimeout(showSelectionScreen, 2500);
 });
 
 socket.on("matched", async ({ roomId: id, role, mode, peers: peerIds, peerFilters: pf }) => {
   roomId = id; sessionMode = mode;
+  isWaiting = false;
   clearQueueTimeout();
   hideFallbackModal();
   hideWaiting();
@@ -780,7 +866,16 @@ socket.on("matched", async ({ roomId: id, role, mode, peers: peerIds, peerFilter
   updateSessionBar();
   startTimer();
 
-  if (!localStream) { try { await startCamera(); } catch { return; } }
+  if (!localStream) {
+    try { await startCamera(); }
+    catch {
+      // Camera denied/revoked — notify server we can't participate, return to selection
+      socket.emit("next");
+      roomId = null; sessionMode = null;
+      showSelectionScreen();
+      return;
+    }
+  }
   attachLocalStream();
 
   const grid = $("videoGrid");
@@ -855,7 +950,11 @@ socket.on("vibe-matched", async () => {
 });
 
 // ─── SIGNAL ────────────────────────────────────────────────────────────────
+// KEY FIX: ICE candidates that arrive before setRemoteDescription() completes
+// are buffered in pendingCandidates[peerId] and flushed immediately after.
+// Without this, candidates are silently dropped and cross-device media never flows.
 socket.on("signal", async ({ fromId, data }) => {
+  // Lazily create peer + tile if we receive a signal before matched event fires
   if (!peers[fromId]) {
     if (!localStream) { try { await startCamera(); } catch { return; } }
     createPeer(fromId);
@@ -864,19 +963,47 @@ socket.on("signal", async ({ fromId, data }) => {
   }
   const pc = peers[fromId]?.pc;
   if (!pc) return;
+
   try {
     if (data.type === "offer") {
+      // Rollback any in-progress local offer (glare condition)
       if (pc.signalingState !== "stable" && pc.signalingState !== "have-remote-offer") {
         await pc.setLocalDescription({ type: "rollback" });
       }
       await pc.setRemoteDescription(new RTCSessionDescription(data));
+      // Flush any ICE candidates that arrived before the offer was processed
+      const buffered = pendingCandidates[fromId] ?? [];
+      pendingCandidates[fromId] = [];
+      for (const c of buffered) {
+        try { await pc.addIceCandidate(c); } catch (_) {}
+      }
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socket.emit("signal", { roomId, targetId: fromId, data: { type: answer.type, sdp: answer.sdp } });
+
     } else if (data.type === "answer") {
-      if (pc.signalingState === "have-local-offer") await pc.setRemoteDescription(new RTCSessionDescription(data));
+      if (pc.signalingState === "have-local-offer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(data));
+        // Flush buffered candidates for the caller side too
+        const buffered = pendingCandidates[fromId] ?? [];
+        pendingCandidates[fromId] = [];
+        for (const c of buffered) {
+          try { await pc.addIceCandidate(c); } catch (_) {}
+        }
+      }
+
     } else if (data.candidate !== undefined) {
-      try { await pc.addIceCandidate(data.candidate ? new RTCIceCandidate(data) : null); } catch (_) {}
+      // ICE candidate — buffer if remote description not set yet
+      if (!data.candidate) return; // null candidate = gathering complete, ignore
+      const candidate = new RTCIceCandidate(data);
+      if (pc.remoteDescription && pc.remoteDescription.type) {
+        // Remote description ready — add immediately
+        try { await pc.addIceCandidate(candidate); } catch (_) {}
+      } else {
+        // Remote description not yet set — buffer for later
+        if (!pendingCandidates[fromId]) pendingCandidates[fromId] = [];
+        pendingCandidates[fromId].push(candidate);
+      }
     }
   } catch (err) { console.error(`Signal error [${fromId.slice(0,8)}]:`, err); }
 });
