@@ -959,7 +959,8 @@ socket.on("signal", async ({ fromId, data }) => {
     if (!localStream) { try { await startCamera(); } catch { return; } }
     createPeer(fromId);
     const grid = $("videoGrid");
-    if (grid && !$(`tile-${fromId}`)) { grid.appendChild(buildRemoteTile(fromId)); refreshLayout(); }
+    if (grid && !$(`tile-${fromId}`)) grid.appendChild(buildRemoteTile(fromId));
+    refreshLayout(); // always sync layout — receiver's tile pre-exists from matched but peers map was empty until now
   }
   const pc = peers[fromId]?.pc;
   if (!pc) return;
