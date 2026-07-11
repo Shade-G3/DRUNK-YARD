@@ -233,8 +233,15 @@ function attachStreamToTile(peerId, stream) {
   if (!tile) return;
   const video = tile.querySelector("video");
   const ph    = tile.querySelector(".video-tile__placeholder");
-  if (video) { video.srcObject = stream; video.style.display = "block"; }
-  if (ph)    ph.style.display = "none";
+  if (video) {
+    // IMPORTANT: make element visible BEFORE assigning srcObject.
+    // Setting srcObject on a display:none element breaks video rendering on
+    // Android Chrome and iOS Safari — the browser sees no surface to decode into.
+    video.style.display = "block";
+    video.srcObject = stream;
+    video.play().catch(() => {});
+  }
+  if (ph) ph.style.display = "none";
 }
 
 // ─── PEER CONNECTION ───────────────────────────────────────────────────────
@@ -255,14 +262,16 @@ function createPeer(peerId) {
 
   // Handle empty streams[] on mobile Safari — build MediaStream from raw track
   pc.ontrack = (event) => {
+    const entry = peers[peerId];
+    if (!entry) return; // peer cleaned up before track arrived
     const incoming = event.streams?.[0];
     if (incoming) {
-      peers[peerId].stream = incoming;
+      entry.stream = incoming;
       attachStreamToTile(peerId, incoming);
     } else {
-      if (!peers[peerId].stream) peers[peerId].stream = new MediaStream();
-      peers[peerId].stream.addTrack(event.track);
-      attachStreamToTile(peerId, peers[peerId].stream);
+      if (!entry.stream) entry.stream = new MediaStream();
+      entry.stream.addTrack(event.track);
+      attachStreamToTile(peerId, entry.stream);
     }
   };
 
