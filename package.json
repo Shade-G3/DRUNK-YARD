@@ -1,0 +1,15 @@
+{
+  "name": "drunkyard",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Drunk Yard — anonymous video rooms for 2–6 people with games and drink gifting",
+  "scripts": {
+    "setup": "npm --prefix Server install && npm --prefix Client install",
+    "dev:server": "npm --prefix Server run dev",
+    "dev:client": "npm --prefix Client run dev",
+    "build": "npm --prefix Client ci --include=dev && npm --prefix Client run build && npm --prefix Server ci --include=dev && npm --prefix Server run build",
+    "start": "node Server/dist/index.js",
+    "typecheck": "npm --prefix Server run typecheck && npm --prefix Client run typecheck"
+  },
+  "engines": { "node": ">=18.18.0" }
+}
