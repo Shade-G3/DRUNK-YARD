@@ -1,1 +1,10 @@
 .DS_Store
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+
+# v1 code kept locally for reference (it is already in git history)
+_old_v1/
