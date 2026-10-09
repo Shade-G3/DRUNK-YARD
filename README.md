@@ -36,9 +36,13 @@ The Node server serves the built React app, so there's only one URL and no CORS 
 ## TURN (needed for video on mobile networks)
 
 Without TURN, two people on different networks (especially Jio/Airtel mobile data) often match but
-their video stays on "Connecting…". The server logs `⚠ No TURN server configured` at startup until you set one.
+their video stays on "Connecting…".
 
-**Easiest — Cloudflare Realtime TURN** (generous free tier, pay per GB after):
+**Zero setup (default):** the server hands out the same free public relay v1 used (`openrelay.metered.ca`).
+It works out of the box, but it's shared by everyone and has no uptime guarantee. Video stays end-to-end
+encrypted either way — the relay only forwards packets.
+
+**When you have real users — Cloudflare Realtime TURN** (generous free tier, pay per GB after), then set `PUBLIC_TURN=off`:
 1. dash.cloudflare.com → **Realtime** → **TURN Server** → *Create* → copy the **Turn Token ID** and **API Token**.
 2. In Render → Environment add `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN`, then redeploy.
 3. Check `https://<your-app>.onrender.com/api/ice` — it should now list `turn:` URLs with a username/credential.
