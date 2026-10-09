@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build, typecheck & smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            Client/package-lock.json
+            Server/package-lock.json
+
+      # Same command Render runs, so a green check means the deploy build works.
+      - name: Build (client + server)
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Security audit (production deps, high+)
+        run: |
+          npm --prefix Server audit --omit=dev --audit-level=high
+          npm --prefix Client audit --omit=dev --audit-level=high
+
+      - name: Start server (production mode)
+        env:
+          NODE_ENV: production
+          PORT: 3000
+        run: |
+          npm start > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/health && exit 0
+            sleep 1
+          done
+          echo "Server did not become healthy"; cat server.log; exit 1
+
+      - name: Smoke test (match, chat, gift, leave)
+        run: node Client/scripts/smoke.mjs http://localhost:3000
+
+      - name: Server log
+        if: always()
+        run: cat server.log || true
+
+  deploy:
+    name: Deploy to Render
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      # Optional: add the Render "Deploy Hook" URL as repo secret RENDER_DEPLOY_HOOK_URL
+      # and turn OFF Auto-Deploy in Render, so only CI-passing commits go live.
+      - name: Trigger Render deploy hook
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL not set — skipping (Render auto-deploy will handle it)."
+            exit 0
+          fi
+          curl -fsS -X POST "$HOOK" > /dev/null && echo "Render deploy triggered."

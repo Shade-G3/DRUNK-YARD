@@ -1,0 +1,25 @@
+# Render Blueprint. Used when you create the service via Render → New → Blueprint.
+# For an existing service, copy these values into Settings by hand (Render doesn't
+# apply this file to services created from the dashboard).
+services:
+  - type: web
+    name: drunk-yard
+    runtime: node
+    plan: starter # free tier sleeps → first visitor waits ~50s and sees an empty yard
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true # set to false + use the GitHub Actions deploy hook to deploy only after CI passes
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: ALLOWED_ORIGINS
+        sync: false # e.g. https://drunk-yard.onrender.com
+      - key: CF_TURN_KEY_ID
+        sync: false
+      - key: CF_TURN_API_TOKEN
+        sync: false

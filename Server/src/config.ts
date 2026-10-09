@@ -29,7 +29,12 @@ export const config = {
   turnUrls: (process.env.TURN_URLS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
   /** coturn "use-auth-secret" shared secret → short-lived HMAC credentials (never ship static TURN passwords). */
   turnSecret: process.env.TURN_SECRET ?? "",
-  turnTtlSec: num(process.env.TURN_TTL_SEC, 3600),
+  turnTtlSec: num(process.env.TURN_TTL_SEC, 24 * 3600),
+  /** Cloudflare Realtime TURN (dash.cloudflare.com → Realtime → TURN Server). */
+  cfTurnKeyId: process.env.CF_TURN_KEY_ID ?? "",
+  cfTurnApiToken: process.env.CF_TURN_API_TOKEN ?? "",
+  /** Metered.ca: full URL, e.g. https://<app>.metered.live/api/v1/turn/credentials?apiKey=... */
+  meteredTurnUrl: process.env.METERED_TURN_URL ?? "",
 
   reportsToBan: num(process.env.REPORTS_TO_BAN, 3),
   banHours: num(process.env.BAN_HOURS, 24),

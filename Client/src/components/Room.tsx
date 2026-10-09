@@ -40,7 +40,11 @@ function Tile({ peer, local }: { peer: PeerInfo; local?: boolean }) {
           <span className="avatar" style={{ background: colorFor(peer.id) }}>
             {initials(peer.handle)}
           </span>
-          {connecting && <span>{state === "failed" ? "Couldn’t connect video" : "Connecting…"}</span>}
+          {connecting && (
+            <span style={{ textAlign: "center", padding: "0 12px" }}>
+              {state === "failed" ? "Video couldn’t connect on this network. Chat still works — try Next." : "Connecting video…"}
+            </span>
+          )}
         </div>
       )}
       <div className="tile-tags">

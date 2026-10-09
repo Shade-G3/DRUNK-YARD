@@ -12,8 +12,7 @@
     "resolveJsonModule": true,
     "useDefineForClassFields": true,
     "noUnusedLocals": true,
-    "baseUrl": ".",
-    "paths": { "@shared/*": ["../Server/src/shared/*"] },
+    "paths": { "@shared/*": ["./../Server/src/shared/*"] },
     "types": ["vite/client"]
   },
   "include": ["src", "../Server/src/shared"]

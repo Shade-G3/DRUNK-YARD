@@ -31,6 +31,29 @@ Camera works on `localhost`. To test on your phone over Wi-Fi you need **HTTPS**
 5. Use at least the **Starter** instance. The free tier sleeps, so the first visitor waits ~50s and sees nobody.
 
 The Node server serves the built React app, so there's only one URL and no CORS setup.
+`render.yaml` has the same settings if you create the service as a Render Blueprint.
+
+## TURN (needed for video on mobile networks)
+
+Without TURN, two people on different networks (especially Jio/Airtel mobile data) often match but
+their video stays on "Connecting…". The server logs `⚠ No TURN server configured` at startup until you set one.
+
+**Easiest — Cloudflare Realtime TURN** (generous free tier, pay per GB after):
+1. dash.cloudflare.com → **Realtime** → **TURN Server** → *Create* → copy the **Turn Token ID** and **API Token**.
+2. In Render → Environment add `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN`, then redeploy.
+3. Check `https://<your-app>.onrender.com/api/ice` — it should now list `turn:` URLs with a username/credential.
+
+Alternatives: Metered.ca (`METERED_TURN_URL` = full credentials URL with `apiKey`) or your own coturn
+(`TURN_URLS` + `TURN_SECRET`). Credentials are short-lived and generated on the server.
+
+## CI (GitHub Actions)
+
+`.github/workflows/ci.yml` runs on every PR and push to `main`:
+build (same command as Render) → typecheck → `npm audit` (high+) → start the server in production mode →
+smoke test (`Client/scripts/smoke.mjs`: two fake users match, chat, send a drink, leave).
+
+Deploy only after CI passes (optional): in Render, copy **Settings → Deploy Hook** URL, add it as the
+GitHub secret `RENDER_DEPLOY_HOOK_URL`, and turn **Auto-Deploy off**. Dependabot opens weekly update PRs.
 
 ## What's inside
 
