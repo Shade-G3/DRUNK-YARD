@@ -55,17 +55,30 @@ async function fetchTurn(): Promise<IceServer[] | null> {
   }
 }
 
+/** v1's free relay. Media stays end-to-end encrypted (DTLS-SRTP); the relay only forwards packets. */
+const PUBLIC_TURN: IceServer = {
+  urls: [
+    "turn:openrelay.metered.ca:80",
+    "turn:openrelay.metered.ca:443",
+    "turn:openrelay.metered.ca:443?transport=tcp",
+    "turns:openrelay.metered.ca:443",
+  ],
+  username: "openrelayproject",
+  credential: "openrelayproject",
+};
+
 export function turnConfigured(): boolean {
   return !!((config.cfTurnKeyId && config.cfTurnApiToken) || config.meteredTurnUrl || (config.turnUrls.length && config.turnSecret));
 }
 
 export async function iceServers(): Promise<IceServer[]> {
   const stun: IceServer[] = config.stunUrls.length ? [{ urls: config.stunUrls }] : [];
-  if (!turnConfigured()) return stun;
+  const fallback = config.publicTurn ? [PUBLIC_TURN] : [];
+  if (!turnConfigured()) return [...stun, ...fallback];
   // Cache shared credentials for half their lifetime (cuts API calls to the provider).
   if (cache && cache.expires > Date.now()) return [...stun, ...cache.servers];
   inflight ??= fetchTurn().finally(() => (inflight = null));
   const turn = await inflight;
   if (turn?.length) cache = { servers: turn, expires: Date.now() + (config.turnTtlSec * 1000) / 2 };
-  return [...stun, ...(turn ?? [])];
+  return [...stun, ...(turn?.length ? turn : fallback)];
 }

@@ -118,7 +118,12 @@ io.on("connection", (socket) => hub.attach(socket));
 
 server.listen(config.port, () => {
   console.log(`🍻 Drunk Yard server on :${config.port}`);
-  if (!turnConfigured()) console.warn("⚠ No TURN server configured — video will fail for many mobile users. See README → TURN.");
+  if (!turnConfigured())
+    console.log(
+      config.publicTurn
+        ? "ℹ Using the free public TURN relay (openrelay.metered.ca). Fine to start; add your own TURN for reliability (README → TURN)."
+        : "⚠ No TURN server — video will fail for many mobile users. See README → TURN.",
+    );
 });
 
 const shutdown = () => {
