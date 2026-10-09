@@ -31,6 +31,16 @@ Camera works on `localhost`. To test on your phone over Wi-Fi you need **HTTPS**
 5. Use at least the **Starter** instance. The free tier sleeps, so the first visitor waits ~50s and sees nobody.
 
 The Node server serves the built React app, so there's only one URL and no CORS setup.
+`render.yaml` has the same settings if you create the service as a Render Blueprint.
+
+## CI (GitHub Actions)
+
+`.github/workflows/ci.yml` runs on every PR and push to `main`:
+build (same command as Render) → typecheck → `npm audit` (high+) → start the server in production mode →
+smoke test (`Client/scripts/smoke.mjs`: two fake users match, chat, send a drink, leave).
+
+Deploy only after CI passes (optional): in Render, copy **Settings → Deploy Hook** URL, add it as the
+GitHub secret `RENDER_DEPLOY_HOOK_URL`, and turn **Auto-Deploy off**. Dependabot opens weekly update PRs.
 
 ## What's inside
 
