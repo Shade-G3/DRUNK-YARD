@@ -19,7 +19,7 @@ services:
         value: "1"
       - key: ALLOWED_ORIGINS
         sync: false # e.g. https://drunk-yard.onrender.com
-      - key: TURN_URLS
+      - key: CF_TURN_KEY_ID
         sync: false
-      - key: TURN_SECRET
+      - key: CF_TURN_API_TOKEN
         sync: false

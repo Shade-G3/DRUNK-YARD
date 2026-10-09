@@ -33,6 +33,19 @@ Camera works on `localhost`. To test on your phone over Wi-Fi you need **HTTPS**
 The Node server serves the built React app, so there's only one URL and no CORS setup.
 `render.yaml` has the same settings if you create the service as a Render Blueprint.
 
+## TURN (needed for video on mobile networks)
+
+Without TURN, two people on different networks (especially Jio/Airtel mobile data) often match but
+their video stays on "Connecting…". The server logs `⚠ No TURN server configured` at startup until you set one.
+
+**Easiest — Cloudflare Realtime TURN** (generous free tier, pay per GB after):
+1. dash.cloudflare.com → **Realtime** → **TURN Server** → *Create* → copy the **Turn Token ID** and **API Token**.
+2. In Render → Environment add `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN`, then redeploy.
+3. Check `https://<your-app>.onrender.com/api/ice` — it should now list `turn:` URLs with a username/credential.
+
+Alternatives: Metered.ca (`METERED_TURN_URL` = full credentials URL with `apiKey`) or your own coturn
+(`TURN_URLS` + `TURN_SECRET`). Credentials are short-lived and generated on the server.
+
 ## CI (GitHub Actions)
 
 `.github/workflows/ci.yml` runs on every PR and push to `main`:

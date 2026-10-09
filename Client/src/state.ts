@@ -115,8 +115,15 @@ const DEFAULT_PREFS: Prefs = {
 let mesh: Mesh | null = null;
 const DEFAULT_ICE: RTCIceServer[] = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }];
 let iceServers: RTCIceServer[] | null = null;
-// Prefetch TURN/STUN once so room:joined can be handled synchronously (no event races).
-void fetchIceServers().then((s) => (iceServers = s));
+let iceFetchedAt = 0;
+// Prefetch TURN/STUN so room:joined can be handled synchronously (no event races).
+// TURN credentials expire, so refresh them every few hours while the tab stays open.
+function refreshIce() {
+  if (Date.now() - iceFetchedAt < 4 * 3600_000) return;
+  iceFetchedAt = Date.now();
+  void fetchIceServers().then((s) => (iceServers = s));
+}
+refreshIce();
 let fxId = 1;
 const glowTimers: Record<string, number> = {};
 
@@ -198,6 +205,7 @@ export const useApp = create<State>((set, get) => ({
     if (!(await get().startCamera())) return;
     if (!socket.connected) socket.connect();
     teardownRoom(false);
+    refreshIce();
     set({ screen: "searching", searchSince: Date.now(), sheet: null });
     socket.emit("queue:join", { vibe: prefs.vibe, drink: prefs.drink, size: prefs.size, ageConfirmed: true, anyone });
   },

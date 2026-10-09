@@ -2,7 +2,6 @@ import express from "express";
 import http from "http";
 import path from "path";
 import fs from "fs";
-import { createHmac, randomBytes } from "crypto";
 import helmet from "helmet";
 import compression from "compression";
 import { Server } from "socket.io";
@@ -11,6 +10,7 @@ import { config } from "./config";
 import { Store } from "./store";
 import { Hub, isUuid } from "./hub";
 import { IpWindow } from "./limiter";
+import { iceServers, turnConfigured } from "./ice";
 import type { ClientToServer, ServerToClient } from "./shared/protocol";
 
 // ─── Real client IP (spoof-resistant) ──────────────────────────────────────
@@ -69,17 +69,10 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // Short-lived TURN credentials (coturn --use-auth-secret). No static passwords in the client.
 const iceLimiter = new IpWindow(30, 60_000);
-app.get("/api/ice", (req, res) => {
+app.get("/api/ice", async (req, res) => {
   if (!iceLimiter.allow(clientIp(req))) return res.status(429).json({ error: "rate" });
-  const iceServers: { urls: string | string[]; username?: string; credential?: string }[] = [];
-  if (config.stunUrls.length) iceServers.push({ urls: config.stunUrls });
-  if (config.turnUrls.length && config.turnSecret) {
-    const username = `${Math.floor(Date.now() / 1000) + config.turnTtlSec}:${randomBytes(6).toString("hex")}`;
-    const credential = createHmac("sha1", config.turnSecret).update(username).digest("base64");
-    iceServers.push({ urls: config.turnUrls, username, credential });
-  }
   res.setHeader("Cache-Control", "no-store");
-  res.json({ iceServers });
+  res.json({ iceServers: await iceServers() });
 });
 
 // Serve the built React app (single-service deploy).
@@ -123,7 +116,10 @@ io.use((socket, next) => {
 
 io.on("connection", (socket) => hub.attach(socket));
 
-server.listen(config.port, () => console.log(`🍻 Drunk Yard server on :${config.port}`));
+server.listen(config.port, () => {
+  console.log(`🍻 Drunk Yard server on :${config.port}`);
+  if (!turnConfigured()) console.warn("⚠ No TURN server configured — video will fail for many mobile users. See README → TURN.");
+});
 
 const shutdown = () => {
   io.close();

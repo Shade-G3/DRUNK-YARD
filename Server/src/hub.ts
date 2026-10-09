@@ -25,7 +25,7 @@ interface SockData {
   handle: string;
   limiter: SocketLimiter;
   roomId: string | null;
-  recent: string[]; // deviceIds met recently (avoid instant rematch on Next)
+  recent: Map<string, number>; // deviceId → when we last shared a room (short cool-down after Next)
   met: Map<string, { deviceId: string; handle: string; ts: number }>; // socketId → who we shared a room with
 }
 
@@ -73,6 +73,7 @@ export class Hub {
 
   constructor(private io: IO, private store: Store) {
     setInterval(() => this.broadcastOnline(), 5000).unref();
+    setInterval(() => this.rematchWaiting(), 3000).unref();
     setInterval(() => {
       const cutoff = Date.now() - 24 * 3600_000;
       for (const [k, t] of this.cheersGiven) if (t < cutoff) this.cheersGiven.delete(k);
@@ -85,7 +86,7 @@ export class Hub {
     d.handle = randomHandle();
     d.limiter = new SocketLimiter();
     d.roomId = null;
-    d.recent = [];
+    d.recent = new Map();
     d.met = new Map();
     if (!this.byDevice.has(d.deviceId)) this.byDevice.set(d.deviceId, new Set());
     this.byDevice.get(d.deviceId)!.add(sock.id);
@@ -179,11 +180,32 @@ export class Hub {
       return;
     }
 
+    if (!this.place(sock, req)) {
+      this.waiting.set(sock.id, { sock, req, since: Date.now() });
+      sock.emit("waiting", { since: Date.now() });
+    }
+  }
+
+  /** Re-try everyone still waiting (cool-downs expire, people leave rooms, etc.). */
+  private rematchWaiting() {
+    for (const w of [...this.waiting.values()]) {
+      if (!this.waiting.has(w.sock.id) || !w.sock.connected) continue;
+      this.waiting.delete(w.sock.id);
+      if (!this.place(w.sock, w.req)) this.waiting.set(w.sock.id, w);
+    }
+  }
+
+  /** Put `sock` into a room if anyone suitable exists. Returns false if it should keep waiting. */
+  private place(sock: Sock, req: JoinRequest): boolean {
+    const d = sock.data as SockData;
+    const size = req.size;
+    const COOLDOWN_MS = 10_000; // after Next, skip that person for a bit — but don't ban them forever (small user base!)
     const okWith = (other: Sock) => {
       const od = other.data as SockData;
-      if (other.id === sock.id || od.deviceId === d.deviceId) return false;
+      if (other.id === sock.id) return false; // same device in two tabs is allowed (handy for testing)
       if (this.store.isBlocked(d.deviceId, od.deviceId)) return false;
-      if (d.recent.includes(od.deviceId) || od.recent.includes(d.deviceId)) return false;
+      const t = Math.max(d.recent.get(od.deviceId) ?? 0, od.recent.get(d.deviceId) ?? 0);
+      if (Date.now() - t < COOLDOWN_MS) return false;
       return true;
     };
     const vibeOk = (a: Vibe, b: Vibe, w?: JoinRequest) => req.anyone || w?.anyone || compatible(a, b);
@@ -196,7 +218,7 @@ export class Hub {
         .sort((a, b) => b.members.size - a.members.size);
       if (open.length) {
         this.addToRoom(open[0], sock, req);
-        return;
+        return true;
       }
     }
 
@@ -213,12 +235,9 @@ export class Hub {
       // Earlier waiters join first; each later joiner offers to everyone already inside.
       for (const w of take) this.addToRoom(room, w.sock, w.req);
       this.addToRoom(room, sock, req);
-      return;
+      return true;
     }
-
-    // 3) Wait.
-    this.waiting.set(sock.id, { sock, req, since: Date.now() });
-    sock.emit("waiting", { since: Date.now() });
+    return false;
   }
 
   private peerInfo(sock: Sock, m: { drink: Drink; vibe: Vibe }): PeerInfo {
@@ -245,8 +264,10 @@ export class Hub {
     for (const m of existing) {
       m.sock.emit("room:peer-joined", me);
       const md = m.sock.data as SockData;
-      md.recent = [d.deviceId, ...md.recent].slice(0, 6);
-      d.recent = [md.deviceId, ...d.recent].slice(0, 6);
+      md.recent.set(d.deviceId, Date.now());
+      d.recent.set(md.deviceId, Date.now());
+      if (md.recent.size > 50) md.recent.delete(md.recent.keys().next().value!);
+      if (d.recent.size > 50) d.recent.delete(d.recent.keys().next().value!);
       md.met.set(sock.id, { deviceId: d.deviceId, handle: d.handle, ts: Date.now() });
       d.met.set(m.id, { deviceId: md.deviceId, handle: md.handle, ts: Date.now() });
       if (md.met.size > 200) md.met.delete(md.met.keys().next().value!);
