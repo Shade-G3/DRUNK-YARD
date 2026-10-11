@@ -135,8 +135,8 @@ server.listen(config.port, () => {
   if (!turnConfigured())
     console.log(
       config.publicTurn
-        ? "ℹ Using the free public TURN relay (openrelay.metered.ca). Fine to start; add your own TURN for reliability (README → TURN)."
-        : "⚠ No TURN server — video will fail for many mobile users. See README → TURN.",
+        ? "ℹ Using the free public TURN relay (openrelay.metered.ca) — it was dead when last checked. Configure CF_TURN_* (README → TURN)."
+        : "⚠ No TURN server — Brave, Safari and most mobile-data users won't get video. Set CF_TURN_KEY_ID + CF_TURN_API_TOKEN (README → TURN).",
     );
 });
 

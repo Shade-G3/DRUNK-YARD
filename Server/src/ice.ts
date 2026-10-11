@@ -29,7 +29,7 @@ async function cloudflare(): Promise<IceServer[] | null> {
   const j = (await r.json()) as { iceServers: IceServer | IceServer[] };
   const list = Array.isArray(j.iceServers) ? j.iceServers : [j.iceServers];
   // Port 53 is blocked by many browsers/networks; drop those URLs.
-  return list.map((s) => ({ ...s, urls: ([] as string[]).concat(s.urls).filter((u) => !u.includes(":53")) }));
+  return list.map((s) => ({ ...s, urls: ([] as string[]).concat(s.urls).filter((u) => !/:53(\?|$)/.test(u)) }));
 }
 
 async function metered(): Promise<IceServer[] | null> {
