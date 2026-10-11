@@ -26,7 +26,7 @@ export function ThemeToggle() {
 }
 
 export function Lobby() {
-  const { prefs, setPref, local, camError, mic, cam, me, online, connected } = useApp();
+  const { prefs, setPref, local, camError, camStarting, mic, cam, me, online, connected } = useApp();
   const { startCamera, toggleMic, toggleCam, findRoom, shuffleName } = useApp.getState();
   const barActive = prefs.bar && prefs.drink !== "sober";
   const copy = BAR_COPY[prefs.drink];
@@ -65,8 +65,8 @@ export function Lobby() {
               <div className="cam-error">
                 <I.CamOff size={28} />
                 <span>{camError}</span>
-                <button className="btn" onClick={() => void startCamera()}>
-                  Try again
+                <button className="btn" disabled={camStarting} onClick={() => void startCamera()}>
+                  {camStarting ? "Starting camera…" : "Try again"}
                 </button>
               </div>
             ) : (
