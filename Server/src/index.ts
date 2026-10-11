@@ -65,6 +65,18 @@ app.use((_req, res, next) => {
   next();
 });
 
+// CORS for the separately-hosted frontend (e.g. Vercel) — only for our own allowed origins.
+app.use("/api", (req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && config.allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // Short-lived TURN credentials (coturn --use-auth-secret). No static passwords in the client.
@@ -92,6 +104,8 @@ const io = new Server<ClientToServer, ServerToClient>(server, {
   pingTimeout: 20_000,
   connectTimeout: 15_000,
   allowRequest: (req, cb) => cb(null, originAllowed(req.headers.origin, req.headers.host)),
+  // Long-polling fallback from another origin (Vercel) needs CORS; WebSockets don't.
+  cors: { origin: (o, cb) => cb(null, !o || config.allowedOrigins.includes(o)), methods: ["GET", "POST"] },
 });
 
 const store = new Store();

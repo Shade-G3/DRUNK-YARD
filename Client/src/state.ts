@@ -305,7 +305,11 @@ export function wireSocket() {
   const set = useApp.setState;
   const get = useApp.getState;
 
-  socket.on("connect", () => set({ connected: true }));
+  let connectErrorShown = false;
+  socket.on("connect", () => {
+    connectErrorShown = false;
+    set({ connected: true });
+  });
   socket.on("disconnect", () => {
     set({ connected: false });
     if (get().room || get().screen === "searching") {
@@ -318,6 +322,9 @@ export function wireSocket() {
     if (err.message === "banned") {
       set({ bannedUntil: err.data?.until ?? Date.now() + 3600_000 });
       socket.disconnect();
+    } else if (!connectErrorShown && err.message !== "too_many_connections") {
+      connectErrorShown = true;
+      get().toast("Can’t reach the server. Retrying…", { err: true, ms: 6000 });
     } else if (err.message === "too_many_connections") {
       get().toast("Too many connections from your network. Wait a minute.", { err: true });
     }

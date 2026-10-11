@@ -3,7 +3,7 @@ import { useApp } from "../state";
 import { LIQUID } from "./Art";
 
 export function Searching() {
-  const { prefs, searchSince } = useApp();
+  const { prefs, searchSince, connected } = useApp();
   const { cancelSearch, findRoom } = useApp.getState();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -22,7 +22,12 @@ export function Searching() {
       <p className="muted" style={{ margin: 0 }}>
         <span className="mono">{waited}s</span> · looking for {prefs.vibe === "any" ? "any vibe" : `“${prefs.vibe}” vibes`}
       </p>
-      {waited >= 10 && prefs.vibe !== "any" && (
+      {!connected && (
+        <p className="game-note" role="alert" style={{ maxWidth: 360 }}>
+          Can’t reach the Drunk Yard server right now. If it just woke up, give it up to a minute — we’ll keep trying.
+        </p>
+      )}
+      {connected && waited >= 10 && prefs.vibe !== "any" && (
         <button className="btn btn-inv" onClick={() => void findRoom(true)}>
           Nobody yet — join anyone
         </button>
