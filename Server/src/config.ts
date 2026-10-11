@@ -43,10 +43,10 @@ export const config = {
   /** Metered.ca: full URL, e.g. https://<app>.metered.live/api/v1/turn/credentials?apiKey=... */
   meteredTurnUrl: process.env.METERED_TURN_URL ?? "",
   /**
-   * Free public TURN relay (the same one v1 used). On by default so video works with zero setup.
-   * Best-effort only — no SLA, shared by everyone. Set PUBLIC_TURN=off once you add your own TURN.
+   * Free public TURN relay that v1 used (openrelay.metered.ca). As of Oct 2026 it rejects allocations,
+   * so it's OFF by default. PUBLIC_TURN=on re-enables it if Metered ever revives it.
    */
-  publicTurn: (process.env.PUBLIC_TURN ?? "on").toLowerCase() !== "off",
+  publicTurn: (process.env.PUBLIC_TURN ?? "off").toLowerCase() === "on",
 
   reportsToBan: num(process.env.REPORTS_TO_BAN, 3),
   banHours: num(process.env.BAN_HOURS, 24),
