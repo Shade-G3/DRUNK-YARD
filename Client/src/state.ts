@@ -68,6 +68,7 @@ interface State {
   mic: boolean;
   cam: boolean;
   camError: string | null;
+  camStarting: boolean;
   startCamera: () => Promise<boolean>;
   toggleMic: () => void;
   toggleCam: () => void;
@@ -113,6 +114,60 @@ const DEFAULT_PREFS: Prefs = {
 };
 
 let mesh: Mesh | null = null;
+let camPending: Promise<boolean> | null = null;
+
+/**
+ * Open camera + mic. Safari/Brave can reject "fancy" constraints or a busy device, so we
+ * step down to simpler requests before giving up, and show the real error so it's debuggable.
+ */
+async function openCamera(): Promise<boolean> {
+  const set = useApp.setState;
+  set({ camStarting: true, camError: null });
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      set({ camError: "This browser can’t use the camera on this page (it needs HTTPS and a modern browser)." });
+      return false;
+    }
+    const attempts: MediaStreamConstraints[] = [
+      {
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      },
+      { video: true, audio: true },
+      { video: true, audio: false },
+    ];
+    let last: unknown = null;
+    for (const c of attempts) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia(c);
+        set({ local: s, camError: null, mic: s.getAudioTracks().length > 0, cam: true });
+        if (!s.getAudioTracks().length) useApp.getState().toast("Microphone unavailable — joined with camera only.", { err: true });
+        return true;
+      } catch (e) {
+        last = e;
+        const n = (e as DOMException)?.name;
+        if (n === "NotAllowedError" || n === "SecurityError") break; // permission problem: retrying won't help
+      }
+    }
+    const err = last as DOMException | null;
+    const name = err?.name ?? "Error";
+    const isSafari = /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
+    const msg =
+      name === "NotAllowedError" || name === "SecurityError"
+        ? isSafari
+          ? "Safari blocked the camera. Safari menu → Settings for this website → Camera & Microphone: Allow, then reload the page."
+          : "Camera blocked. Allow camera and mic for this site in your browser settings, then reload."
+        : name === "NotFoundError" || name === "OverconstrainedError"
+          ? "No usable camera found on this device."
+          : name === "NotReadableError" || name === "AbortError"
+            ? "Your camera is busy. Close other apps or tabs using it (FaceTime, Zoom, another browser), then try again."
+            : "Couldn’t start your camera.";
+    set({ camError: `${msg} (${name}${err?.message ? `: ${err.message}` : ""})` });
+    return false;
+  } finally {
+    set({ camStarting: false });
+  }
+}
 const DEFAULT_ICE: RTCIceServer[] = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }];
 let iceServers: RTCIceServer[] | null = null;
 let iceFetchedAt = 0;
@@ -145,27 +200,11 @@ export const useApp = create<State>((set, get) => ({
   mic: true,
   cam: true,
   camError: null,
+  camStarting: false,
   startCamera: async () => {
     if (get().local) return true;
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24, max: 30 }, facingMode: "user" },
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-      set({ local: s, camError: null, mic: true, cam: true });
-      return true;
-    } catch (e) {
-      const name = (e as DOMException)?.name;
-      set({
-        camError:
-          name === "NotAllowedError"
-            ? "Camera blocked. Allow camera and mic in your browser settings, then try again."
-            : name === "NotFoundError"
-              ? "No camera found on this device."
-              : "Couldn't start your camera. Is another app using it?",
-      });
-      return false;
-    }
+    camPending ??= openCamera().finally(() => (camPending = null));
+    return camPending;
   },
   toggleMic: () => {
     const on = !get().mic;
