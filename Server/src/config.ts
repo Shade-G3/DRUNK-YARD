@@ -6,10 +6,17 @@ export const config = {
   isProd: process.env.NODE_ENV === "production",
 
   /** Comma-separated list of allowed browser origins. Empty in dev = allow localhost. */
-  allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean),
+  allowedOrigins: [
+    ...new Set([
+      // The app's own public frontends (Vercel static site + Render). Add more via ALLOWED_ORIGINS.
+      "https://drunk-yard.vercel.app",
+      "https://drunk-yard.onrender.com",
+      ...(process.env.ALLOWED_ORIGINS ?? "")
+        .split(",")
+        .map((s) => s.trim().replace(/\/+$/, "")) // tolerate a trailing slash in the env value
+        .filter(Boolean),
+    ]),
+  ],
 
   /**
    * How many reverse proxies sit in front of the app (Render/Railway/Fly = 1, Cloudflare + Render = 2).

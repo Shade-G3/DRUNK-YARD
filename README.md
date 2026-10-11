@@ -31,6 +31,11 @@ Camera works on `localhost`. To test on your phone over Wi-Fi you need **HTTPS**
 5. Use at least the **Starter** instance. The free tier sleeps, so the first visitor waits ~50s and sees nobody.
 
 The Node server serves the built React app, so there's only one URL and no CORS setup.
+
+**Frontend on Vercel too?** Vercel only hosts static files — it can't run the Socket.IO server. Production
+builds therefore point at Render via `Client/.env.production` (`VITE_SERVER_URL`), and the server allows
+`https://drunk-yard.vercel.app` by default (add other domains in `ALLOWED_ORIGINS`). If the server URL changes,
+update that file.
 `render.yaml` has the same settings if you create the service as a Render Blueprint.
 
 ## TURN (needed for video on mobile networks)

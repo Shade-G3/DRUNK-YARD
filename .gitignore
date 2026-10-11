@@ -8,3 +8,4 @@ dist/
 
 # v1 code kept locally for reference (it is already in git history)
 _old_v1/
+!Client/.env.production
