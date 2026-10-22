@@ -97,6 +97,10 @@ export const GAME_KINDS = [
   "red_green",
   "would_you_rather",
   "truth_or_dare",
+  "guess_number",
+  "which_animal",
+  "guess_object",
+  "emoji_decode",
 ] as const;
 export type GameKind = (typeof GAME_KINDS)[number];
 
@@ -117,7 +121,14 @@ export const GAME_META: Record<GameKind, GameMeta> = {
   red_green: { kind: "red_green", name: "Red Flag / Green Flag", short: "RG", desc: "Judge the dating takes", min: 2, color: "#F49BC1" },
   would_you_rather: { kind: "would_you_rather", name: "Would You Rather", short: "WR", desc: "Pick a side, defend it", min: 2, color: "#B9A4FF" },
   truth_or_dare: { kind: "truth_or_dare", name: "Truth or Dare", short: "TD", desc: "Spicy pack in Flirty rooms only", min: 2, color: "#F4F1EA" },
+  guess_number: { kind: "guess_number", name: "Guess My Number", short: "#?", desc: "Pick 1–100, they guess: higher or lower", min: 2, color: "#7FE0C2" },
+  which_animal: { kind: "which_animal", name: "Which Animal Am I?", short: "AN", desc: "Everyone sees it but you. Ask yes/no!", min: 2, color: "#FFB27A" },
+  guess_object: { kind: "guess_object", name: "Guess My Object", short: "OB", desc: "Describe it without saying it", min: 2, color: "#9FD0FF" },
+  emoji_decode: { kind: "emoji_decode", name: "Emoji Decode", short: "EM", desc: "Bollywood & songs in emojis — fastest wins", min: 2, color: "#FFE07A" },
 };
+
+/** Games where players type free-text / number guesses (shown as a live guess feed). */
+export const GUESS_GAMES: readonly GameKind[] = ["guess_number", "which_animal", "guess_object", "emoji_decode"];
 
 export type GamePhase = "lobby" | "compose" | "question" | "reveal" | "done";
 
@@ -137,6 +148,10 @@ export interface GameView {
   reveal: { answers: Record<string, string>; note: string } | null;
   scores: Record<string, number>;
   spicy: boolean;
+  /** Guess games: the hidden word/number as THIS viewer is allowed to see it (null = hidden from you). */
+  secret: string | null;
+  /** Guess games: latest guesses with the server's verdict. */
+  guesses: { from: string; text: string; verdict: "higher" | "lower" | "correct" | "wrong" }[];
 }
 
 // ─── Wire types ──────────────────────────────────────────────────────────────
@@ -250,4 +265,5 @@ export interface ClientToServer {
 export const LIMITS = {
   chatMax: 300,
   statementMax: 90,
+  guessMax: 40,
 } as const;

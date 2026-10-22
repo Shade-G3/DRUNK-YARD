@@ -123,6 +123,16 @@ export class Mesh {
     [...this.peers.keys()].forEach((id) => this.remove(id));
   }
 
+  /** Swap the outgoing camera track (filters on/off) on every connection — no renegotiation. */
+  replaceVideoTrack(track: MediaStreamTrack | null) {
+    for (const { pc } of this.peers.values()) {
+      // The video m-line is identified by its receiver's kind, even if our sender track is null.
+      const sender = pc.getTransceivers().find((t) => t.receiver.track?.kind === "video" && t.currentDirection !== "stopped")?.sender;
+      if (sender) sender.replaceTrack(track).catch((e) => console.warn("replaceTrack failed", e));
+    }
+    this.tuneBitrate();
+  }
+
   /** Cap upload per peer so a 6-person mesh doesn't melt a phone's uplink. */
   tuneBitrate() {
     const n = this.peers.size;

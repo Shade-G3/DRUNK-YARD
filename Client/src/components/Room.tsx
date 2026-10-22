@@ -61,6 +61,11 @@ function Tile({ peer, local }: { peer: PeerInfo; local?: boolean }) {
           </span>
         )}
       </div>
+      {local && cam && (
+        <button className="filter-fab phone-only" aria-label="Camera filters" onClick={() => useApp.getState().openSheet("filters")}>
+          <I.Sparkle size={16} />
+        </button>
+      )}
       {!local && (
         <div className="tile-actions" onClick={(e) => e.stopPropagation()}>
           <button aria-label={cheered ? `You cheered ${peer.handle}` : `Give ${peer.handle} cheers`} onClick={() => giveCheers(peer.id)} style={cheered ? { color: "#C8F560" } : undefined}>
@@ -201,6 +206,9 @@ export function Room() {
         </button>
         <button className={`d-btn ${cam ? "" : "off"}`} onClick={toggleCam} aria-label={cam ? "Turn camera off" : "Turn camera on"} aria-pressed={!cam}>
           {cam ? <I.Cam /> : <I.CamOff />}
+        </button>
+        <button className="d-btn desk-only" onClick={() => openSheet("filters")} aria-label="Camera filters" disabled={!cam}>
+          <I.Sparkle />
         </button>
         <button className="d-btn on phone-only" onClick={() => openSheet("games")} aria-label="Games">
           <I.Dice />

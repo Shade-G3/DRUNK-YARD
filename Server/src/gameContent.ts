@@ -145,3 +145,56 @@ export function pickN<T>(arr: T[], n: number): T[] {
   while (out.length < n) out.push(...copy.slice(0, n - out.length));
   return out;
 }
+
+// ── Guess games (Instagram-style) ────────────────────────────────────────────
+/** [answer, ...aliases] — matching ignores case, spaces, articles and a trailing "s". */
+export const ANIMALS: string[][] = [
+  ["elephant"], ["giraffe"], ["penguin"], ["kangaroo"], ["octopus"], ["cow"], ["camel"], ["peacock"],
+  ["shark"], ["panda"], ["tiger"], ["monkey"], ["owl"], ["crocodile", "croc"], ["dolphin"], ["sloth"],
+  ["flamingo"], ["frog"], ["horse"], ["snake"], ["lion"], ["zebra"], ["bat"], ["parrot"], ["goat"],
+];
+
+export const OBJECTS: string[][] = [
+  ["toothbrush"], ["umbrella"], ["pressure cooker", "cooker"], ["remote", "remote control", "tv remote"],
+  ["phone charger", "charger"], ["pillow"], ["sunglasses", "shades"], ["mirror"], ["scissors"],
+  ["mosquito bat", "mosquito racket"], ["chair"], ["key", "keys"], ["wallet"], ["headphones", "earphones"],
+  ["candle"], ["ladder"], ["bucket"], ["laptop"], ["shoe", "shoes"], ["clock", "alarm clock"],
+  ["helmet"], ["pizza"], ["spoon"], ["toothpaste"], ["ceiling fan", "fan"],
+];
+
+/** [emoji clue, answer, ...aliases] */
+export const EMOJI_PUZZLES: string[][] = [
+  ["👨‍🎓👨‍🎓👨‍🎓", "3 Idiots", "three idiots"],
+  ["🤼‍♀️👧👧👨", "Dangal"],
+  ["🏑🇮🇳👨‍🏫", "Chak De India", "chak de"],
+  ["🏃‍♂️🏃‍♂️🏃‍♂️🇮🇳", "Bhaag Milkha Bhaag"],
+  ["🚀🔴👩‍🔬", "Mission Mangal"],
+  ["🦸‍♂️🇮🇳🧥", "Krrish", "krish"],
+  ["🎸🤘", "Rock On", "rock on!!"],
+  ["🦁👑", "The Lion King", "lion king"],
+  ["🚢🧊💔", "Titanic"],
+  ["🦖🏝️", "Jurassic Park"],
+  ["🧞‍♂️🪔", "Aladdin"],
+  ["🐼🥋", "Kung Fu Panda"],
+  ["👽📞🏠", "E.T.", "et"],
+  ["🐀👨‍🍳", "Ratatouille"],
+  ["🍫🏭", "Charlie and the Chocolate Factory", "chocolate factory"],
+  ["🧊👸❄️", "Frozen"],
+  ["🦇🧔🌃", "Batman", "the dark knight", "dark knight"],
+  ["🚗💨🔥", "Fast and Furious", "fast & furious", "the fast and the furious"],
+];
+
+export function normalizeGuess(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/^(a|an|the) /, "")
+    .replace(/\s+/g, "")
+    .replace(/s$/, "");
+}
+
+export function matches(guess: string, accepted: string[]): boolean {
+  const g = normalizeGuess(guess);
+  return !!g && accepted.some((a) => normalizeGuess(a) === g);
+}

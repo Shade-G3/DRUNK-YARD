@@ -56,7 +56,7 @@ jobs:
       - name: Smoke test (match, chat, gift, leave)
         run: node Client/scripts/smoke.mjs http://localhost:3000
 
-      - name: Adversarial tests (abuse, spam, sybil reports, payload fuzzing)
+      - name: Adversarial + guess-game tests
         env:
           NODE_ENV: production
           PORT: 3100
@@ -67,6 +67,7 @@ jobs:
           node Server/dist/index.js > attack-server.log 2>&1 &
           sleep 2
           node Server/test/attack.mjs http://localhost:3100
+          node Server/test/guess.mjs http://localhost:3100
 
       - name: Server logs
         if: always()

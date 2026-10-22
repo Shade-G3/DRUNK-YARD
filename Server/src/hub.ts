@@ -3,6 +3,8 @@
  * Single-process, in-memory. To scale horizontally, move queues/rooms to Redis and
  * add the Socket.IO Redis adapter — the event surface stays the same.
  */
+import { scrubLinks } from "./text";
+export { scrubLinks };
 import { randomUUID } from "crypto";
 import type { Server, Socket } from "socket.io";
 import {
@@ -525,11 +527,4 @@ export class Hub {
       }
     }
   }
-}
-
-/** Neutralise links/domains in chat — the #1 vector for scams, phishing and spam on random-chat apps. */
-const LINK_RE =
-  /\b(?:https?:\/\/|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|ly|me|in|co|xyz|app|link|gg|tv|to|ru|cc|biz|info|site|online|live|club|top|vip|shop|fun|cam|xxx|sex|onion)\b(?:\/\S*)?/gi;
-export function scrubLinks(text: string): string {
-  return text.replace(LINK_RE, "[link removed]");
 }

@@ -70,3 +70,6 @@ export const Heart = ({ size, ...p }: P) => (
 export const Leave = ({ size, ...p }: P) => (
   <svg {...base(size)} {...p}><path d="M15 4h4v16h-4M10 17l-5-5 5-5M5 12h11" /></svg>
 );
+export const Sparkle = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z" /></svg>
+);

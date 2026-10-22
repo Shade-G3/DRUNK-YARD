@@ -1,3 +1,4 @@
+import { FilterPipeline, isFilterId, type FilterId } from "./lib/filters";
 import { create } from "zustand";
 import type {
   ChatMsg, Drink, GameView, GiftLanded, Me, PeerInfo, Reaction, RoomJoined, RoomSize, Shelf, TierIndex, Vibe,
@@ -8,7 +9,7 @@ import { storage } from "./lib/storage";
 import * as sfx from "./lib/sound";
 
 export type Screen = "lobby" | "searching" | "room" | "recap";
-export type Sheet = null | "games" | "gift" | "report" | "chat";
+export type Sheet = null | "games" | "gift" | "report" | "chat" | "filters";
 
 export interface Effect {
   id: number;
@@ -54,6 +55,7 @@ interface Prefs {
   ageOk: boolean;
   sound: boolean;
   hideIp: boolean;
+  filter: FilterId;
 }
 
 interface State {
@@ -113,9 +115,43 @@ const DEFAULT_PREFS: Prefs = {
   ageOk: false,
   sound: true,
   hideIp: false,
+  filter: "none",
 };
 
 let mesh: Mesh | null = null;
+let rawCam: MediaStream | null = null; // what the camera gives us
+let pipeline: FilterPipeline | null = null; // only exists while a filter is on
+
+/** Route the camera through a filter (or straight through for "none") and hot-swap it on live calls. */
+function applyFilter(f: FilterId) {
+  const set = useApp.setState;
+  if (!rawCam) return;
+  const rawVideo = rawCam.getVideoTracks()[0];
+  if (!rawVideo) return set({ local: rawCam });
+  if (f !== "none" && pipeline) {
+    pipeline.setFilter(f);
+    return;
+  }
+  const old = pipeline;
+  let out = rawCam;
+  pipeline = null;
+  if (f !== "none") {
+    try {
+      pipeline = new FilterPipeline(rawVideo, f);
+      out = new MediaStream([pipeline.track, ...rawCam.getAudioTracks()]);
+    } catch (e) {
+      console.warn("filters unavailable", e);
+      useApp.getState().toast("Filters aren’t supported in this browser.", { err: true });
+      useApp.getState().setPref("filter", "none");
+      return;
+    }
+  }
+  const cam = useApp.getState().cam;
+  out.getVideoTracks().forEach((t) => (t.enabled = cam));
+  set({ local: out });
+  mesh?.replaceVideoTrack(out.getVideoTracks()[0] ?? null);
+  old?.stop(); // stop the old canvas only after peers have the new track
+}
 let camPending: Promise<boolean> | null = null;
 
 /**
@@ -142,7 +178,9 @@ async function openCamera(): Promise<boolean> {
     for (const c of attempts) {
       try {
         const s = await navigator.mediaDevices.getUserMedia(c);
+        rawCam = s;
         set({ local: s, camError: null, mic: s.getAudioTracks().length > 0, cam: true });
+        if (useApp.getState().prefs.filter !== "none") applyFilter(useApp.getState().prefs.filter);
         if (!s.getAudioTracks().length) useApp.getState().toast("Microphone unavailable — joined with camera only.", { err: true });
         return true;
       } catch (e) {
@@ -185,12 +223,17 @@ let fxId = 1;
 const glowTimers: Record<string, number> = {};
 
 export const useApp = create<State>((set, get) => ({
-  prefs: { ...DEFAULT_PREFS, ...storage.get<Partial<Prefs>>("dy.prefs", {}), ageOk: false },
+  prefs: (() => {
+    const p = { ...DEFAULT_PREFS, ...storage.get<Partial<Prefs>>("dy.prefs", {}), ageOk: false };
+    if (!isFilterId(p.filter)) p.filter = "none";
+    return p;
+  })(),
   setPref: (k, v) => {
     set((s) => ({ prefs: { ...s.prefs, [k]: v } }));
     const { ageOk: _skip, ...persist } = get().prefs;
     storage.set("dy.prefs", persist);
     if (k === "sound") sfx.setSound(Boolean(v));
+    if (k === "filter") applyFilter(v as FilterId);
   },
 
   connected: false,
@@ -215,7 +258,7 @@ export const useApp = create<State>((set, get) => ({
   },
   toggleCam: () => {
     const on = !get().cam;
-    get().local?.getVideoTracks().forEach((t) => (t.enabled = on));
+    [...(get().local?.getVideoTracks() ?? []), ...(rawCam?.getVideoTracks() ?? [])].forEach((t) => (t.enabled = on));
     set({ cam: on });
   },
 

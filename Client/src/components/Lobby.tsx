@@ -1,3 +1,4 @@
+import { FilterBar } from "./Filters";
 import { useEffect } from "react";
 import { DRINKS, DRINK_LABEL, VIBES, VIBE_LABEL, RoomSize, TierIndex } from "@shared/protocol";
 import { useApp } from "../state";
@@ -93,6 +94,7 @@ export function Lobby() {
               </div>
             )}
           </section>
+          {local && <FilterBar />}
 
           <section className="bar-hero desk-only">
             <DrinkGlass drink={prefs.drink} size={96} />
