@@ -23,11 +23,17 @@ export class Mesh {
     private local: () => MediaStream | null,
     private onStream: (id: string, s: MediaStream | null) => void,
     private onState: (id: string, state: RTCPeerConnectionState) => void,
+    /** "Hide my IP": only use the TURN relay, so strangers never see your real IP address. */
+    private relayOnly = false,
   ) {}
 
   add(id: string, initiator: boolean) {
     if (this.peers.has(id)) return this.peers.get(id)!;
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers, bundlePolicy: "max-bundle" });
+    const pc = new RTCPeerConnection({
+      iceServers: this.iceServers,
+      bundlePolicy: "max-bundle",
+      iceTransportPolicy: this.relayOnly ? "relay" : "all",
+    });
     const entry: PeerConn = { pc, pending: [], initiator, restarts: 0 };
     this.peers.set(id, entry);
 

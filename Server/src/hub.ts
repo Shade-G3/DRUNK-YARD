@@ -27,6 +27,9 @@ interface SockData {
   roomId: string | null;
   recent: Map<string, number>; // deviceId → when we last shared a room (short cool-down after Next)
   met: Map<string, { deviceId: string; handle: string; ts: number }>; // socketId → who we shared a room with
+  lastFreeGift: number;
+  lastChat: { text: string; n: number; ts: number };
+  violations: number[]; // timestamps of rate-limit hits (persistent abusers get disconnected)
 }
 
 interface Waiter {
@@ -88,6 +91,10 @@ export class Hub {
     d.roomId = null;
     d.recent = new Map();
     d.met = new Map();
+    d.lastFreeGift = 0;
+    d.lastChat = { text: "", n: 0, ts: 0 };
+    d.violations = [];
+    this.store.account(d.deviceId, d.ip); // create with IP so anti-farming rules apply
     if (!this.byDevice.has(d.deviceId)) this.byDevice.set(d.deviceId, new Set());
     this.byDevice.get(d.deviceId)!.add(sock.id);
 
@@ -98,6 +105,13 @@ export class Hub {
       sock.on(ev as any, (...args: any[]) => {
         if (!d.limiter.allow(ev)) {
           if (ev !== "signal") sock.emit("error", { code: "rate", message: "Slow down a little." });
+          const now = Date.now();
+          d.violations = d.violations.filter((t) => now - t < 60_000);
+          d.violations.push(now);
+          if (d.violations.length > 300) {
+            console.warn(`[abuse] disconnecting ${d.deviceId.slice(0, 8)} (${d.violations.length} rate-limit hits/min)`);
+            sock.disconnect(true);
+          }
           return;
         }
         try {
@@ -132,6 +146,12 @@ export class Hub {
     on("callagain:request", (p: unknown) => this.callAgainRequest(sock, (p as any)?.token));
     on("callagain:accept", (p: unknown) => this.callAgainAccept(sock, (p as any)?.token));
     on("report", (p: unknown) => this.report(sock, p));
+    on("account:delete", (cb: unknown) => {
+      this.store.deleteAccount(d.deviceId);
+      console.log(JSON.stringify({ evt: "account_deleted", device: d.deviceId.slice(0, 8), ts: new Date().toISOString() }));
+      if (typeof cb === "function") cb(true);
+      sock.disconnect(true);
+    });
 
     sock.on("disconnect", () => {
       this.waiting.delete(sock.id);
@@ -321,8 +341,14 @@ export class Hub {
     const room = this.room(sock);
     const text = (raw as any)?.text;
     if (!room || typeof text !== "string") return;
-    const clean = text.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, LIMITS.chatMax);
+    const clean = scrubLinks(text.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, " ").trim().slice(0, LIMITS.chatMax));
     if (!clean) return;
+    const d = sock.data as SockData;
+    const now = Date.now();
+    if (clean === d.lastChat.text && now - d.lastChat.ts < 30_000) {
+      if (++d.lastChat.n >= 3) return; // same message 3× in 30s = spam
+    } else d.lastChat = { text: clean, n: 1, ts: now };
+    d.lastChat.ts = now;
     this.io.to(room.id).emit("chat:msg", { from: sock.id, handle: (sock.data as SockData).handle, text: clean, ts: Date.now() });
   }
 
@@ -365,8 +391,17 @@ export class Hub {
     if (!room || !p) return;
     const d = sock.data as SockData;
     const category = p.category as (typeof GIFT_CATEGORIES)[number];
-    const tier = Number(p.tier) as TierIndex;
-    if (!GIFT_CATEGORIES.includes(category) || !(tier >= 0 && tier <= 4)) return;
+    if (typeof p.tier !== "number" || !Number.isInteger(p.tier) || p.tier < 0 || p.tier > 4) return;
+    const tier = p.tier as TierIndex;
+    if (typeof category !== "string" || !GIFT_CATEGORIES.includes(category)) return;
+    if (tier === 0) {
+      // Free drinks: one every 10s per sender, so nobody can flood someone's screen with animations.
+      if (Date.now() - d.lastFreeGift < 10_000) {
+        sock.emit("error", { code: "slow", message: "One free drink every 10 seconds — or send a fancier one!" });
+        return;
+      }
+      d.lastFreeGift = Date.now();
+    }
     const isRound = p.to === "table";
     const to = isRound ? room.ids().filter((id) => id !== sock.id) : typeof p.to === "string" && room.members.has(p.to) && p.to !== sock.id ? [p.to] : [];
     if (!to.length) return;
@@ -475,11 +510,14 @@ export class Hub {
     if (!target || target.id === sock.id) return;
     const d = sock.data as SockData;
     const td = target.data as SockData;
-    console.warn(`[report] ${d.deviceId.slice(0, 8)} → ${td.deviceId.slice(0, 8)} (${p.reason})`);
-    const until = this.store.report(d.deviceId, td.deviceId, td.ip);
+    const metAt = d.met.get(target.id)?.ts ?? Date.now();
+    const counts = Date.now() - metAt >= config.reportMinEncounterSec * 1000;
+    const priority = p.reason === "minor" || p.reason === "nudity";
+    // Structured log line → searchable in Render logs until a real review dashboard exists.
+    console.warn(JSON.stringify({ evt: "report", priority, reason: p.reason, reporter: d.deviceId.slice(0, 8), target: td.deviceId.slice(0, 8), counted: counts, ts: new Date().toISOString() }));
+    const until = this.store.report(d.deviceId, d.ip, td.deviceId, td.ip, String(p.reason), counts);
     sock.emit("report:ok");
     // Reporter never gets matched with them again (store.report blocks the pair).
-    // A single report can't kick anyone (that would be an abuse vector); N distinct reporters ban.
     if (until) {
       for (const s of this.otherSockets(td.deviceId)) {
         s.emit("banned", { until });
@@ -487,4 +525,11 @@ export class Hub {
       }
     }
   }
+}
+
+/** Neutralise links/domains in chat — the #1 vector for scams, phishing and spam on random-chat apps. */
+const LINK_RE =
+  /\b(?:https?:\/\/|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|ly|me|in|co|xyz|app|link|gg|tv|to|ru|cc|biz|info|site|online|live|club|top|vip|shop|fun|cam|xxx|sex|onion)\b(?:\/\S*)?/gi;
+export function scrubLinks(text: string): string {
+  return text.replace(LINK_RE, "[link removed]");
 }

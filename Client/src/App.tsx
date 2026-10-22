@@ -7,6 +7,7 @@ import { Room } from "./components/Room";
 import { Recap } from "./components/Recap";
 import { FxLayer } from "./components/Fx";
 import { GamesSheet, GiftSheet, ReportSheet, ChatSheet } from "./components/Sheets";
+import { Legal, LEGAL_PATHS } from "./components/Legal";
 
 function Toasts() {
   const toasts = useApp((s) => s.toasts);
@@ -58,6 +59,8 @@ export default function App() {
     socket.connect();
   }, []);
 
+  const legal = LEGAL_PATHS[window.location.pathname.replace(/\/+$/, "")];
+  if (legal) return <Legal page={legal} />;
   if (bannedUntil > Date.now()) return <Banned until={bannedUntil} />;
 
   return (

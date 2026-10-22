@@ -4,6 +4,7 @@ import { useApp } from "../state";
 import { StreamVideo } from "./Video";
 import { DrinkGlass, DOT, Bottle, Silhouette } from "./Art";
 import * as I from "./Icons";
+import { LegalFooter } from "./Legal";
 
 const BAR_COPY = {
   whisky: { kicker: "BAR MODE · OAK & AMBER", title: "Whisky night.", sub: "Slow pours, long talks. Your rooms glow amber.", cta: "Pour me a room" },
@@ -174,12 +175,20 @@ export function Lobby() {
             <label className="age">
               <input type="checkbox" checked={prefs.ageOk} onChange={(e) => setPref("ageOk", e.target.checked)} />
               <span>
-                I’m 18+ and agree to the Yard Rules: be kind, keep it clothed, no minors. Reported users get banned.
+                I’m 18+ and agree to the <a href="/rules">Yard Rules</a>, <a href="/terms">Terms</a> and{" "}
+                <a href="/privacy">Privacy Policy</a>. Be kind, keep it clothed, no minors.
+              </span>
+            </label>
+            <label className="age">
+              <input type="checkbox" checked={prefs.hideIp} onChange={(e) => setPref("hideIp", e.target.checked)} />
+              <span>
+                <b>Hide my IP from strangers</b> — video goes through our encrypted relay (may add a little delay).
               </span>
             </label>
             <button className="btn-primary" onClick={() => void findRoom()} disabled={!prefs.ageOk}>
               {ctaText} <I.Arrow />
             </button>
+            <LegalFooter />
           </div>
         </div>
       </div>

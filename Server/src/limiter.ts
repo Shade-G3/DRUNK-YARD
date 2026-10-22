@@ -33,6 +33,7 @@ const LIMITS: Record<string, [number, number]> = {
   report: [3, 0.05],
   "name:shuffle": [5, 0.5],
   "callagain:request": [3, 0.1],
+  "account:delete": [2, 0.05],
 };
 
 export class SocketLimiter {

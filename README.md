@@ -100,6 +100,21 @@ Client/src/
 - Fixed v1 group bug where 3+ people forming a room at once couldn’t see each other.
 - Personal email removed from the page; `/stats` endpoint removed.
 
+## Abuse & security testing
+
+`Server/test/attack.mjs` attacks a running server the way a bad actor would and runs in CI on every PR:
+payload fuzzing, join/gift/chat floods, signal injection, gift tampering, coin farming with throwaway
+device IDs, sybil and drive-by mass-reports, per-IP socket exhaustion, scam links, foreign-origin sockets —
+plus a check that genuine reports still ban abusers.
+
+```bash
+TRUST_PROXY_HOPS=1 MAX_CONN_PER_IP_PER_MIN=1000 REPORT_MIN_ENCOUNTER_SEC=2 node Server/dist/index.js &
+node Server/test/attack.mjs http://localhost:3000
+```
+
+Tunable limits (env): `MAX_SOCKETS_PER_IP` (20), `FRESH_ACCOUNTS_PER_IP_PER_DAY` (5),
+`REPORT_MIN_ENCOUNTER_SEC` (20), `REPORTS_TO_BAN` (3 distinct people on distinct IPs), `MAX_ACCOUNTS` (200k).
+
 ## Before a real launch (not done yet — needs accounts/money)
 
 1. **TURN server** (coturn on a small VPS, or Cloudflare/Twilio/Metered TURN). Without it some users on strict mobile networks can't connect video.

@@ -49,6 +49,14 @@ export const config = {
   publicTurn: (process.env.PUBLIC_TURN ?? "off").toLowerCase() === "on",
 
   reportsToBan: num(process.env.REPORTS_TO_BAN, 3),
+  /** A report only counts toward a ban if the reporter actually spent this long with the person. */
+  reportMinEncounterSec: num(process.env.REPORT_MIN_ENCOUNTER_SEC, 20),
+  /** Max simultaneous sockets from one IP. Mobile carriers share IPs (CGNAT), so don't go too low. */
+  maxSocketsPerIp: num(process.env.MAX_SOCKETS_PER_IP, 20),
+  /** Only the first N new device IDs per IP per day get starting coins (stops coin farming). */
+  freshAccountsPerIpPerDay: num(process.env.FRESH_ACCOUNTS_PER_IP_PER_DAY, 5),
+  /** In-memory account cap (least-recently-used are evicted) — stops memory exhaustion. */
+  maxAccounts: num(process.env.MAX_ACCOUNTS, 200_000),
   banHours: num(process.env.BAN_HOURS, 24),
 
   /** Serve the built React app from ../Client/dist when present (single-service deploy). */

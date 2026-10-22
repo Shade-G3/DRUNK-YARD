@@ -53,6 +53,7 @@ interface Prefs {
   drink: Drink;
   ageOk: boolean;
   sound: boolean;
+  hideIp: boolean;
 }
 
 interface State {
@@ -111,6 +112,7 @@ const DEFAULT_PREFS: Prefs = {
   drink: "beer",
   ageOk: false,
   sound: true,
+  hideIp: false,
 };
 
 let mesh: Mesh | null = null;
@@ -383,8 +385,12 @@ export function wireSocket() {
   // Must stay synchronous: room:peer-joined / signal can arrive right after this.
   socket.on("room:joined", (r: RoomJoined) => {
     mesh?.closeAll();
+    const servers = iceServers ?? DEFAULT_ICE;
+    const hasTurn = servers.some((x) => ([] as string[]).concat(x.urls).some((u) => u.startsWith("turn")));
+    const relayOnly = get().prefs.hideIp && hasTurn;
+    if (get().prefs.hideIp && !hasTurn) get().toast("“Hide my IP” needs the relay server, which isn’t set up — connecting normally.", { err: true });
     mesh = new Mesh(
-      iceServers ?? DEFAULT_ICE,
+      servers,
       () => get().local,
       (id, stream) =>
         set((s) => {
@@ -394,6 +400,7 @@ export function wireSocket() {
           return { streams };
         }),
       (id, state) => set((s) => ({ conn: { ...s.conn, [id]: state } })),
+      relayOnly,
     );
     set({
       screen: "room",

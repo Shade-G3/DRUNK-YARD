@@ -243,6 +243,8 @@ export interface ClientToServer {
   "callagain:request": (c: { token: string }) => void;
   "callagain:accept": (c: { token: string }) => void;
   report: (r: { peerId: string; reason: ReportReason }) => void;
+  /** GDPR/DPDP right to erasure: wipe this device's coins, shelf, cheers and mutual links. */
+  "account:delete": (cb: (ok: boolean) => void) => void;
 }
 
 export const LIMITS = {
