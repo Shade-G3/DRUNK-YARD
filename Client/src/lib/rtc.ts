@@ -23,11 +23,17 @@ export class Mesh {
     private local: () => MediaStream | null,
     private onStream: (id: string, s: MediaStream | null) => void,
     private onState: (id: string, state: RTCPeerConnectionState) => void,
+    /** "Hide my IP": only use the TURN relay, so strangers never see your real IP address. */
+    private relayOnly = false,
   ) {}
 
   add(id: string, initiator: boolean) {
     if (this.peers.has(id)) return this.peers.get(id)!;
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers, bundlePolicy: "max-bundle" });
+    const pc = new RTCPeerConnection({
+      iceServers: this.iceServers,
+      bundlePolicy: "max-bundle",
+      iceTransportPolicy: this.relayOnly ? "relay" : "all",
+    });
     const entry: PeerConn = { pc, pending: [], initiator, restarts: 0 };
     this.peers.set(id, entry);
 
@@ -115,6 +121,16 @@ export class Mesh {
 
   closeAll() {
     [...this.peers.keys()].forEach((id) => this.remove(id));
+  }
+
+  /** Swap the outgoing camera track (filters on/off) on every connection — no renegotiation. */
+  replaceVideoTrack(track: MediaStreamTrack | null) {
+    for (const { pc } of this.peers.values()) {
+      // The video m-line is identified by its receiver's kind, even if our sender track is null.
+      const sender = pc.getTransceivers().find((t) => t.receiver.track?.kind === "video" && t.currentDirection !== "stopped")?.sender;
+      if (sender) sender.replaceTrack(track).catch((e) => console.warn("replaceTrack failed", e));
+    }
+    this.tuneBitrate();
   }
 
   /** Cap upload per peer so a 6-person mesh doesn't melt a phone's uplink. */

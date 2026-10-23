@@ -33,6 +33,12 @@ const LIMITS: Record<string, [number, number]> = {
   report: [3, 0.05],
   "name:shuffle": [5, 0.5],
   "callagain:request": [3, 0.1],
+  "account:delete": [2, 0.05],
+  "game:act": [12, 3],
+  "seat:request": [3, 0.05],
+  "seat:vote": [6, 1],
+  "seat:cancel": [6, 1],
+  "link:join": [5, 0.2], // tokens are unguessable UUIDs; this just stops hammering
 };
 
 export class SocketLimiter {

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { GAME_KINDS, GAME_META, type GameView } from "@shared/protocol";
+import { useEffect, useRef, useState } from "react";
+import { BluffBoard, ImposterBoard } from "./PartyGames";
+import { GAME_KINDS, GAME_META, GUESS_GAMES, LIMITS, type GameView } from "@shared/protocol";
 import { socket } from "../lib/socket";
 import { useApp, handleOf } from "../state";
 
@@ -20,6 +21,27 @@ export function GamePicker({ onPicked }: { onPicked?: () => void }) {
       {GAME_KINDS.map((k) => {
         const m = GAME_META[k];
         const tooFew = count < m.min;
+        if (k === "imposter")
+          return (
+            <div key={k} className="game-item game-item-split" aria-disabled={tooFew}>
+              <span className="gi" style={{ background: m.color }}>{m.short}</span>
+              <span className="meta">
+                <b>{m.name}</b>
+                <small>{tooFew ? `Needs ${m.min}+ people — tap Add to bring more` : m.desc}</small>
+                {!tooFew && (
+                  <span className="mode-row">
+                    <button className="btn btn-sm" onClick={() => { socket.emit("game:propose", { kind: k, mode: "undercover" }); onPicked?.(); }}>
+                      Undercover word
+                    </button>
+                    <button className="btn btn-sm" onClick={() => { socket.emit("game:propose", { kind: k, mode: "blank" }); onPicked?.(); }}>
+                      Imposter gets nothing
+                    </button>
+                  </span>
+                )}
+              </span>
+              <span className="players">{m.min}–6</span>
+            </div>
+          );
         return (
           <button
             key={k}
@@ -56,11 +78,35 @@ export function GameBoard({ g }: { g: GameView }) {
   const [lie, setLie] = useState(2);
 
   const answer = (value: string) => socket.emit("game:answer", { value });
-  const total = g.phase === "lobby" ? 20 : g.phase === "compose" ? 60 : g.phase === "reveal" ? (g.kind === "truth_or_dare" ? 30 : 6) : g.kind === "two_truths" ? 20 : g.kind === "truth_or_dare" ? 20 : 15;
+  const guessGame = GUESS_GAMES.includes(g.kind);
+  const party = g.kind === "imposter" || g.kind === "bluff";
+  const total = g.duration ? g.duration / 1000 :
+    g.phase === "lobby" ? 20
+    : g.phase === "compose" ? (g.kind === "guess_number" ? 20 : 60)
+    : g.phase === "reveal" ? (g.kind === "truth_or_dare" ? 30 : 6)
+    : g.kind === "guess_number" ? 45
+    : g.kind === "emoji_decode" ? 40
+    : guessGame ? 60
+    : g.kind === "two_truths" || g.kind === "truth_or_dare" ? 20 : 15;
   const pct = Math.min(100, (left / total) * 100);
 
   const myHandle = players.find((p) => p.id === me)?.handle;
-  const note = (t?: string) => (t && myHandle ? t.split(myHandle).join("You") : t ?? "");
+  // Server text names people; swap your own name for "You" and fix the grammar ("You is" → "You are").
+  const note = (t?: string) => {
+    if (!t || !myHandle) return t ?? "";
+    return t
+      .split(`${myHandle} is `).join("You are ")
+      .split(`${myHandle} was `).join("You were ")
+      .split(`${myHandle} says`).join("You say")
+      .split(`${myHandle} wins`).join("You win")
+      .split(`${myHandle} gets`).join("You get")
+      .split(`${myHandle} gives`).join("You give")
+      .split(`${myHandle} picks`).join("You pick")
+      .split(`${myHandle} starts`).join("You start")
+      .split(`${myHandle} emptied their`).join("You emptied your")
+      .split(`${myHandle}: play`).join("You: play")
+      .split(myHandle).join("You");
+  };
   const counts = (val: string) => (g.reveal ? Object.values(g.reveal.answers).filter((v) => v === val).length : 0);
   const maxCount = Math.max(1, ...((g.reveal && Object.values(g.reveal.answers).length ? Object.values(g.reveal.answers) : [""]) as string[]).map(counts));
 
@@ -95,7 +141,11 @@ export function GameBoard({ g }: { g: GameView }) {
         </>
       )}
 
-      {g.phase === "compose" &&
+      {guessGame && g.phase !== "lobby" && g.phase !== "done" && <GuessBoard g={g} me={me} note={note} />}
+      {g.kind === "imposter" && g.phase !== "lobby" && g.phase !== "done" && <ImposterBoard g={g} me={me} note={note} />}
+      {g.kind === "bluff" && g.phase !== "lobby" && g.phase !== "done" && <BluffBoard g={g} me={me} note={note} />}
+
+      {!guessGame && !party && g.phase === "compose" &&
         (g.turn === me ? (
           <form
             className="compose"
@@ -128,7 +178,7 @@ export function GameBoard({ g }: { g: GameView }) {
           <p className="game-prompt display">{g.prompt}</p>
         ))}
 
-      {(g.phase === "question" || g.phase === "reveal") && (
+      {!guessGame && !party && (g.phase === "question" || g.phase === "reveal") && (
         <>
           <p className="game-prompt display">{g.prompt}</p>
 
@@ -202,7 +252,7 @@ export function GameBoard({ g }: { g: GameView }) {
 
       {g.phase === "done" && <div className="game-note">{note(g.reveal?.note)}</div>}
 
-      {g.phase !== "lobby" && Object.keys(g.scores).length > 0 && (
+      {g.phase !== "lobby" && !(g.kind === "bluff" && g.phase !== "done") && Object.keys(g.scores).length > 0 && (
         <div className="scores">
           {Object.entries(g.scores)
             .sort((a, b) => b[1] - a[1])
@@ -219,5 +269,122 @@ export function GameBoard({ g }: { g: GameView }) {
         </button>
       )}
     </div>
+  );
+}
+
+const VERDICT: Record<GameView["guesses"][number]["verdict"], { label: string; cls: string }> = {
+  higher: { label: "Higher ↑", cls: "v-hi" },
+  lower: { label: "Lower ↓", cls: "v-lo" },
+  correct: { label: "Got it!", cls: "v-ok" },
+  wrong: { label: "Nope", cls: "v-no" },
+};
+
+/** Guess My Number · Which Animal Am I · Guess My Object · Emoji Decode */
+function GuessBoard({ g, me, note }: { g: GameView; me: string; note: (t?: string) => string }) {
+  const [text, setText] = useState("");
+  const feedRef = useRef<HTMLOListElement>(null);
+  const myTurn = g.turn === me;
+  const isNumber = g.kind === "guess_number";
+  useEffect(() => setText(""), [g.round, g.phase]);
+  useEffect(() => {
+    feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
+  }, [g.guesses.length]);
+
+  const canGuess =
+    g.phase === "question" &&
+    (g.kind === "which_animal" ? myTurn : g.kind === "emoji_decode" ? true : !myTurn);
+
+  const send = (e: React.FormEvent) => {
+    e.preventDefault();
+    const v = text.trim();
+    if (!v) return;
+    socket.emit("game:answer", { value: v });
+    setText("");
+  };
+
+  // What the secret card says, per game and per person.
+  let card: { label: string; value: string; hint: string } | null = null;
+  if (g.phase === "question" || g.phase === "compose") {
+    if (g.kind === "guess_number" && myTurn && g.secret)
+      card = { label: "Your secret number", value: g.secret, hint: "The yard sees Higher / Lower on every guess." };
+    if (g.kind === "guess_object" && myTurn && g.secret)
+      card = { label: "Describe this — don’t say it!", value: g.secret, hint: "Use actions, sounds, what it’s for…" };
+    if (g.kind === "which_animal" && !myTurn && g.secret)
+      card = { label: `${handleOf(g.turn ?? "")} is…`, value: g.secret, hint: "Shh! Only answer yes / no out loud." };
+    if (g.kind === "which_animal" && myTurn)
+      card = { label: "You are…", value: "??? 🐾", hint: "Everyone else can see it. Ask yes/no questions, then type your guess." };
+  }
+
+  return (
+    <>
+      <p className={`game-prompt display${g.kind === "emoji_decode" ? " emoji-clue" : ""}`}>{note(g.prompt)}</p>
+      {g.kind === "emoji_decode" && g.phase === "question" && <div className="muted" style={{ fontSize: 13 }}>Bollywood or movie — fastest correct answer wins.</div>}
+
+      {card && (
+        <div className="secret-card" role="status">
+          <small>{card.label}</small>
+          <b className="display">{card.value}</b>
+          <span className="muted">{card.hint}</span>
+        </div>
+      )}
+
+      {g.phase === "compose" && isNumber && myTurn && (
+        <form className="guess-form" onSubmit={send}>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={100}
+            value={text}
+            placeholder="Pick 1–100"
+            aria-label="Your secret number"
+            onChange={(e) => setText(e.target.value)}
+            autoFocus
+          />
+          <button className="btn-primary" type="submit">Lock it</button>
+        </form>
+      )}
+
+      {g.guesses.length > 0 && (
+        <ol className="guess-feed" ref={feedRef} aria-live="polite">
+          {g.guesses.map((x, i) => (
+            <li key={i}>
+              <span className="who">{x.from === me ? "You" : handleOf(x.from)}</span>
+              <span className="what">{x.text}</span>
+              <span className={`verdict ${VERDICT[x.verdict].cls}`}>{VERDICT[x.verdict].label}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {canGuess && (
+        <form className="guess-form" onSubmit={send}>
+          <input
+            type={isNumber ? "number" : "text"}
+            inputMode={isNumber ? "numeric" : "text"}
+            min={isNumber ? 1 : undefined}
+            max={isNumber ? 100 : undefined}
+            maxLength={LIMITS.guessMax}
+            autoComplete="off"
+            enterKeyHint="send"
+            value={text}
+            placeholder={isNumber ? "Your guess (1–100)" : g.kind === "which_animal" ? "I think I’m a…" : "Type your guess"}
+            aria-label="Your guess"
+            onChange={(e) => setText(e.target.value)}
+          />
+          <button className="btn-primary" type="submit">Guess</button>
+        </form>
+      )}
+
+      {g.phase === "question" && !canGuess && (
+        <div className="muted" style={{ fontSize: 13 }}>
+          {g.kind === "guess_number" ? "They’re guessing your number…"
+            : g.kind === "guess_object" ? "Describe it out loud — they’re typing guesses."
+            : `${handleOf(g.turn ?? "")} is guessing who they are…`}
+        </div>
+      )}
+      {g.phase === "compose" && !myTurn && <div className="muted" style={{ fontSize: 13 }}>Get ready to guess…</div>}
+      {g.phase === "reveal" && g.reveal && <div className="game-note">{note(g.reveal.note)}</div>}
+    </>
   );
 }

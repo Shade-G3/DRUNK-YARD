@@ -28,7 +28,10 @@ export class Store {
   private accounts = new Map<string, Account>();
   private bansDevice = new Map<string, number>(); // deviceId → until
   private bansIp = new Map<string, number>();
-  private reports = new Map<string, Map<string, number>>(); // target deviceId → reporter deviceId → ts
+  private reports = new Map<string, Map<string, { ts: number; ip: string; counts: boolean }>>(); // target → reporter → info
+  private freshByIp = new Map<string, number[]>(); // ip → timestamps of new accounts
+  /** Recent reports for human review (wire to an admin panel / ticketing later). */
+  readonly reviewQueue: { ts: number; reporter: string; target: string; reason: string; counted: boolean }[] = [];
   private avoid = new Map<string, Set<string>>(); // deviceId → deviceIds never to match again (reported/blocked)
   private mutuals = new Map<string, Mutual>();
 
@@ -36,11 +39,16 @@ export class Store {
     setInterval(() => this.sweep(), 10 * 60_000).unref();
   }
 
-  account(deviceId: string): Account {
+  account(deviceId: string, ip?: string): Account {
     let a = this.accounts.get(deviceId);
-    if (!a) {
-      a = { coins: STARTING_COINS, lastGrantDay: today(), shelf: { tiers: [0, 0, 0, 0, 0], total: 0 }, cheers: 0 };
+    if (a) {
+      // LRU touch: re-insert so the least recently used accounts sit at the front.
+      this.accounts.delete(deviceId);
       this.accounts.set(deviceId, a);
+    } else {
+      a = { coins: this.freshCoins(ip), lastGrantDay: today(), shelf: { tiers: [0, 0, 0, 0, 0], total: 0 }, cheers: 0 };
+      this.accounts.set(deviceId, a);
+      while (this.accounts.size > config.maxAccounts) this.accounts.delete(this.accounts.keys().next().value!);
     }
     if (a.lastGrantDay !== today()) {
       a.coins += DAILY_FREE_COINS;
@@ -49,11 +57,28 @@ export class Store {
     return a;
   }
 
+  /** Starting coins only for the first few new device IDs per IP per day (anti-farming). */
+  private freshCoins(ip?: string): number {
+    if (!ip) return 0;
+    const dayAgo = Date.now() - 24 * 3600_000;
+    const list = (this.freshByIp.get(ip) ?? []).filter((t) => t > dayAgo);
+    list.push(Date.now());
+    this.freshByIp.set(ip, list);
+    return list.length <= config.freshAccountsPerIpPerDay ? STARTING_COINS : 0;
+  }
+
   spend(deviceId: string, amount: number): boolean {
     const a = this.account(deviceId);
     if (a.coins < amount) return false;
     a.coins -= amount;
     return true;
+  }
+
+  /** Right to erasure. Bans/reports are kept (legal basis: safety + legal obligations). */
+  deleteAccount(deviceId: string) {
+    this.accounts.delete(deviceId);
+    this.avoid.delete(deviceId);
+    for (const [k, m] of this.mutuals) if (m.a === deviceId || m.b === deviceId) this.mutuals.delete(k);
   }
 
   addToShelf(deviceId: string, tier: TierIndex) {
@@ -77,16 +102,23 @@ export class Store {
     return until > now ? until : 0;
   }
 
-  /** Returns ban expiry if this report tipped the target over the threshold. */
-  report(reporter: string, target: string, targetIp: string): number {
+  /**
+   * Record a report. Returns ban expiry if it tipped the target over the threshold.
+   * A ban needs N reporters from N DIFFERENT IPs who each actually spent time with the target —
+   * so one person with several tabs, or drive-by instant reports, can't get someone banned.
+   */
+  report(reporter: string, reporterIp: string, target: string, targetIp: string, reason: string, counts: boolean): number {
     if (reporter === target) return 0;
     this.block(reporter, target);
+    this.reviewQueue.push({ ts: Date.now(), reporter, target, reason, counted: counts });
+    if (this.reviewQueue.length > 5000) this.reviewQueue.splice(0, this.reviewQueue.length - 5000);
     let m = this.reports.get(target);
     if (!m) this.reports.set(target, (m = new Map()));
-    m.set(reporter, Date.now());
+    m.set(reporter, { ts: Date.now(), ip: reporterIp, counts });
     const dayAgo = Date.now() - 24 * 3600_000;
-    const distinct = [...m.values()].filter((t) => t > dayAgo).length;
-    if (distinct >= config.reportsToBan) {
+    const valid = [...m.values()].filter((r) => r.counts && r.ts > dayAgo);
+    const distinctIps = new Set(valid.map((r) => r.ip)).size;
+    if (valid.length >= config.reportsToBan && distinctIps >= config.reportsToBan) {
       const until = Date.now() + config.banHours * 3600_000;
       this.bansDevice.set(target, until);
       // IP bans are blunt (shared Jio/Airtel CGNAT IPs!) — keep them short.
@@ -97,7 +129,10 @@ export class Store {
   }
 
   block(a: string, b: string) {
-    if (!this.avoid.has(a)) this.avoid.set(a, new Set());
+    if (!this.avoid.has(a)) {
+      if (this.avoid.size > config.maxAccounts) this.avoid.delete(this.avoid.keys().next().value!);
+      this.avoid.set(a, new Set());
+    }
     this.avoid.get(a)!.add(b);
   }
 
@@ -130,5 +165,15 @@ export class Store {
     for (const [k, v] of this.bansDevice) if (v < now) this.bansDevice.delete(k);
     for (const [k, v] of this.bansIp) if (v < now) this.bansIp.delete(k);
     for (const [k, m] of this.mutuals) if (m.expires < now) this.mutuals.delete(k);
+    const dayAgo = now - 24 * 3600_000;
+    for (const [ip, list] of this.freshByIp) {
+      const kept = list.filter((t) => t > dayAgo);
+      if (kept.length) this.freshByIp.set(ip, kept);
+      else this.freshByIp.delete(ip);
+    }
+    for (const [target, m] of this.reports) {
+      for (const [r, info] of m) if (info.ts < dayAgo) m.delete(r);
+      if (!m.size) this.reports.delete(target);
+    }
   }
 }

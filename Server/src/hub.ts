@@ -3,14 +3,17 @@
  * Single-process, in-memory. To scale horizontally, move queues/rooms to Redis and
  * add the Socket.IO Redis adapter — the event surface stays the same.
  */
+import { scrubLinks } from "./text";
+export { scrubLinks };
 import { randomUUID } from "crypto";
 import type { Server, Socket } from "socket.io";
 import {
   ClientToServer, ServerToClient, Drink, Vibe, RoomSize, JoinRequest, PeerInfo, SignalData,
   VIBES, DRINKS, REACTIONS, REPORT_REASONS, GAME_KINDS, GAME_META, GIFT_CATEGORIES, GIFT_LADDER,
-  TIER_META, TierIndex, LIMITS, MIN_ROOM, MAX_ROOM, Me,
+  TIER_META, TierIndex, LIMITS, MIN_ROOM, MAX_ROOM, Me, IMPOSTER_MODES, ImposterMode, SeatState, GameKind,
 } from "./shared/protocol";
 import { Game, GameHost } from "./games";
+import { BluffGame, ImposterGame, GameAct } from "./partyGames";
 import { Store } from "./store";
 import { SocketLimiter } from "./limiter";
 import { randomHandle } from "./names";
@@ -27,6 +30,9 @@ interface SockData {
   roomId: string | null;
   recent: Map<string, number>; // deviceId → when we last shared a room (short cool-down after Next)
   met: Map<string, { deviceId: string; handle: string; ts: number }>; // socketId → who we shared a room with
+  lastFreeGift: number;
+  lastChat: { text: string; n: number; ts: number };
+  violations: number[]; // timestamps of rate-limit hits (persistent abusers get disconnected)
 }
 
 interface Waiter {
@@ -42,10 +48,32 @@ interface Member {
   vibe: Vibe;
 }
 
+type PartyGame = Game | ImposterGame | BluffGame;
+
+/** "Add someone": everyone must agree, then one extra seat opens for a while. */
+interface Seat {
+  stage: "vote" | "open";
+  mode: "match" | "link";
+  by: string;
+  vibe: Vibe;
+  yes: Set<string>;
+  deadline: number;
+  timer: NodeJS.Timeout;
+  token?: string;
+  grew: boolean; // did we bump room.size for this seat?
+}
+
+const SEAT_VOTE_MS = 15_000;
+const SEAT_MATCH_MS = 90_000;
+const SEAT_LINK_MS = 10 * 60_000;
+const SEAT_COOLDOWN_MS = 30_000;
+
 class Room {
   id = `r_${randomUUID()}`;
   members = new Map<string, Member>();
-  game: Game | null = null;
+  game: PartyGame | null = null;
+  seat: Seat | null = null;
+  seatCooldownUntil = 0;
   lastGift = new Map<string, number>(); // "from>to" → ts
   createdAt = Date.now();
   constructor(public size: RoomSize, public vibe: Vibe, public privateRoom = false) {}
@@ -67,6 +95,7 @@ export class Hub {
   private rooms = new Map<string, Room>();
   private byDevice = new Map<string, Set<string>>(); // deviceId → socketIds
   private invites = new Map<string, { from: string; ts: number }>(); // mutual token → requester socket id
+  private links = new Map<string, string>(); // friend-invite token → roomId
   private lastOnline = -1;
   private cheersGiven = new Map<string, number>(); // "deviceA>deviceB" → ts
 
@@ -88,6 +117,10 @@ export class Hub {
     d.roomId = null;
     d.recent = new Map();
     d.met = new Map();
+    d.lastFreeGift = 0;
+    d.lastChat = { text: "", n: 0, ts: 0 };
+    d.violations = [];
+    this.store.account(d.deviceId, d.ip); // create with IP so anti-farming rules apply
     if (!this.byDevice.has(d.deviceId)) this.byDevice.set(d.deviceId, new Set());
     this.byDevice.get(d.deviceId)!.add(sock.id);
 
@@ -98,6 +131,13 @@ export class Hub {
       sock.on(ev as any, (...args: any[]) => {
         if (!d.limiter.allow(ev)) {
           if (ev !== "signal") sock.emit("error", { code: "rate", message: "Slow down a little." });
+          const now = Date.now();
+          d.violations = d.violations.filter((t) => now - t < 60_000);
+          d.violations.push(now);
+          if (d.violations.length > 300) {
+            console.warn(`[abuse] disconnecting ${d.deviceId.slice(0, 8)} (${d.violations.length} rate-limit hits/min)`);
+            sock.disconnect(true);
+          }
           return;
         }
         try {
@@ -123,7 +163,18 @@ export class Hub {
       if (!REACTIONS.includes(kind) || !d.roomId) return;
       this.io.to(d.roomId).emit("react", { from: sock.id, kind });
     });
-    on("game:propose", (p: unknown) => this.proposeGame(sock, (p as any)?.kind));
+    on("game:propose", (p: unknown) => this.proposeGame(sock, (p as any)?.kind, (p as any)?.mode));
+    on("game:act", (p: unknown) => {
+      const g = this.room(sock)?.game;
+      if (g && p && typeof p === "object") g.act(sock.id, p as GameAct);
+    });
+    on("seat:request", (p: unknown) => this.seatRequest(sock, p));
+    on("seat:vote", (p: unknown) => this.seatVote(sock, (p as any)?.yes === true));
+    on("seat:cancel", () => {
+      const room = this.room(sock);
+      if (room?.seat) this.closeSeat(room, `${(sock.data as SockData).handle} closed the extra seat.`);
+    });
+    on("link:join", (p: unknown) => this.linkJoin(sock, p));
     on("game:ready", () => this.room(sock)?.game?.markReady(sock.id));
     on("game:answer", (p: unknown) => this.room(sock)?.game?.answer(sock.id, (p as any)?.value, (p as any)?.statements));
     on("game:stop", () => this.room(sock)?.game?.stop());
@@ -132,6 +183,12 @@ export class Hub {
     on("callagain:request", (p: unknown) => this.callAgainRequest(sock, (p as any)?.token));
     on("callagain:accept", (p: unknown) => this.callAgainAccept(sock, (p as any)?.token));
     on("report", (p: unknown) => this.report(sock, p));
+    on("account:delete", (cb: unknown) => {
+      this.store.deleteAccount(d.deviceId);
+      console.log(JSON.stringify({ evt: "account_deleted", device: d.deviceId.slice(0, 8), ts: new Date().toISOString() }));
+      if (typeof cb === "function") cb(true);
+      sock.disconnect(true);
+    });
 
     sock.on("disconnect", () => {
       this.waiting.delete(sock.id);
@@ -170,7 +227,7 @@ export class Hub {
       sock.emit("error", { code: "age", message: "You must confirm you are 18+." });
       return;
     }
-    const req: JoinRequest = { vibe: r.vibe as Vibe, drink: r.drink as Drink, size, ageConfirmed: true, anyone: r.anyone === true };
+    const req: JoinRequest = { vibe: r.vibe as Vibe, drink: r.drink as Drink, size, ageConfirmed: true, anyone: r.anyone === true, ongoing: r.ongoing === true };
 
     this.leaveRoom(sock);
     this.waiting.delete(sock.id);
@@ -210,10 +267,24 @@ export class Hub {
     };
     const vibeOk = (a: Vibe, b: Vibe, w?: JoinRequest) => req.anyone || w?.anyone || compatible(a, b);
 
+    // 0) "Add someone" seats: only people who asked for this table size, or who said
+    //    they're happy to walk into a table that's already chatting. Longest-open first.
+    const seats = [...this.rooms.values()]
+      .filter((rm) => rm.seat?.stage === "open" && rm.seat.mode === "match" && rm.members.size < rm.size)
+      .filter((rm) => (req.size === rm.size || req.ongoing) && vibeOk(rm.seat!.vibe, req.vibe))
+      .filter((rm) => [...rm.members.values()].every((m) => okWith(m.sock)))
+      .sort((a, b) => a.seat!.deadline - b.seat!.deadline);
+    if (seats.length) {
+      const rm = seats[0];
+      this.addToRoom(rm, sock, req, true);
+      this.closeSeat(rm, null, true);
+      return true;
+    }
+
     // 1) Group: join an open room of the same size (fullest first → rooms fill up fast).
     if (size > 2) {
       const open = [...this.rooms.values()]
-        .filter((rm) => !rm.privateRoom && rm.size === size && rm.members.size < size && vibeOk(rm.vibe, req.vibe))
+        .filter((rm) => !rm.privateRoom && !rm.seat && rm.size === size && rm.members.size < size && vibeOk(rm.vibe, req.vibe))
         .filter((rm) => [...rm.members.values()].every((m) => okWith(m.sock)))
         .sort((a, b) => b.members.size - a.members.size);
       if (open.length) {
@@ -245,7 +316,7 @@ export class Hub {
     return { id: sock.id, handle: d.handle, drink: m.drink, vibe: m.vibe, cheers: this.store.account(d.deviceId).cheers };
   }
 
-  private addToRoom(room: Room, sock: Sock, req: { drink: Drink; vibe: Vibe }) {
+  private addToRoom(room: Room, sock: Sock, req: { drink: Drink; vibe: Vibe }, ongoing = false) {
     const d = sock.data as SockData;
     const existing = [...room.members.values()];
     room.members.set(sock.id, { id: sock.id, sock, drink: req.drink, vibe: req.vibe });
@@ -260,6 +331,7 @@ export class Hub {
       you: me,
       peers: existing.map((m) => this.peerInfo(m.sock, m)),
       initiate: existing.map((m) => m.id), // fixes v1 bug: every pair gets exactly one offerer
+      ongoing: ongoing || undefined,
     });
     for (const m of existing) {
       m.sock.emit("room:peer-joined", me);
@@ -274,6 +346,7 @@ export class Hub {
       if (d.met.size > 200) d.met.delete(d.met.keys().next().value!);
     }
     if (room.game) this.pushGame(room);
+    if (room.seat) this.pushSeat(room);
   }
 
   private room(sock: Sock): Room | null {
@@ -291,8 +364,14 @@ export class Hub {
     this.io.to(room.id).emit("room:peer-left", { id: sock.id });
     if (room.members.size === 0) {
       room.game?.dispose();
+      if (room.seat) clearTimeout(room.seat.timer);
+      if (room.seat?.token) this.links.delete(room.seat.token);
       this.rooms.delete(room.id);
       return;
+    }
+    if (room.seat) {
+      if (room.seat.by === sock.id && room.seat.stage === "vote") this.closeSeat(room, "The request was cancelled.");
+      else if (room.seat.stage === "vote") this.checkSeatVotes(room);
     }
     room.game?.memberLeft(sock.id);
   }
@@ -321,13 +400,23 @@ export class Hub {
     const room = this.room(sock);
     const text = (raw as any)?.text;
     if (!room || typeof text !== "string") return;
-    const clean = text.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, LIMITS.chatMax);
+    if (room.game?.locksChat()) {
+      sock.emit("error", { code: "chat_locked", message: "Chat is paused while clues are given — say it out loud!" });
+      return;
+    }
+    const clean = scrubLinks(text.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, " ").trim().slice(0, LIMITS.chatMax));
     if (!clean) return;
+    const d = sock.data as SockData;
+    const now = Date.now();
+    if (clean === d.lastChat.text && now - d.lastChat.ts < 30_000) {
+      if (++d.lastChat.n >= 3) return; // same message 3× in 30s = spam
+    } else d.lastChat = { text: clean, n: 1, ts: now };
+    d.lastChat.ts = now;
     this.io.to(room.id).emit("chat:msg", { from: sock.id, handle: (sock.data as SockData).handle, text: clean, ts: Date.now() });
   }
 
   // ── games ─────────────────────────────────────────────────────────────────
-  private proposeGame(sock: Sock, kind: unknown) {
+  private proposeGame(sock: Sock, kind: unknown, mode?: unknown) {
     const room = this.room(sock);
     if (!room || !GAME_KINDS.includes(kind as any)) return;
     if (room.game) {
@@ -349,7 +438,11 @@ export class Hub {
         this.io.to(room.id).emit("game:state", null);
       },
     };
-    room.game = new Game(kind as any, host, sock.id);
+    const k = kind as GameKind;
+    room.game =
+      k === "imposter" ? new ImposterGame(host, sock.id, IMPOSTER_MODES.includes(mode as ImposterMode) ? (mode as ImposterMode) : "undercover")
+      : k === "bluff" ? new BluffGame(host, sock.id)
+      : new Game(k, host, sock.id);
     this.pushGame(room);
   }
 
@@ -365,8 +458,17 @@ export class Hub {
     if (!room || !p) return;
     const d = sock.data as SockData;
     const category = p.category as (typeof GIFT_CATEGORIES)[number];
-    const tier = Number(p.tier) as TierIndex;
-    if (!GIFT_CATEGORIES.includes(category) || !(tier >= 0 && tier <= 4)) return;
+    if (typeof p.tier !== "number" || !Number.isInteger(p.tier) || p.tier < 0 || p.tier > 4) return;
+    const tier = p.tier as TierIndex;
+    if (typeof category !== "string" || !GIFT_CATEGORIES.includes(category)) return;
+    if (tier === 0) {
+      // Free drinks: one every 10s per sender, so nobody can flood someone's screen with animations.
+      if (Date.now() - d.lastFreeGift < 10_000) {
+        sock.emit("error", { code: "slow", message: "One free drink every 10 seconds — or send a fancier one!" });
+        return;
+      }
+      d.lastFreeGift = Date.now();
+    }
     const isRound = p.to === "table";
     const to = isRound ? room.ids().filter((id) => id !== sock.id) : typeof p.to === "string" && room.members.has(p.to) && p.to !== sock.id ? [p.to] : [];
     if (!to.length) return;
@@ -466,6 +568,116 @@ export class Hub {
     this.addToRoom(room, sock, { drink: "sober", vibe: "any" });
   }
 
+  // ── "Add someone" + friend invite links ───────────────────────────────────
+  private seatRequest(sock: Sock, raw: unknown) {
+    const room = this.room(sock);
+    const p = raw as { mode?: unknown; vibe?: unknown } | null;
+    if (!room || !p) return;
+    const mode = p.mode === "link" ? "link" : p.mode === "match" ? "match" : null;
+    const vibe = (VIBES.includes(p.vibe as Vibe) ? p.vibe : room.vibe) as Vibe;
+    const fail = (message: string) => sock.emit("seat:result", { ok: false, message });
+    if (!mode) return;
+    if (room.seat) return fail("There's already a request going.");
+    if (Date.now() < room.seatCooldownUntil) return fail("Give it a few seconds before asking again.");
+    if (room.members.size < 2) return fail("Wait for someone to join first.");
+    const growing = room.members.size >= room.size;
+    if (growing && room.size >= MAX_ROOM) return fail(`Tables max out at ${MAX_ROOM} people.`);
+    if (!growing && mode === "match") return fail("There's already an empty seat — someone will join soon.");
+
+    const timer = setTimeout(() => this.closeSeat(room, "Not everyone answered in time."), SEAT_VOTE_MS);
+    room.seat = { stage: "vote", mode, by: sock.id, vibe, yes: new Set([sock.id]), deadline: Date.now() + SEAT_VOTE_MS, timer, grew: false };
+    this.pushSeat(room);
+  }
+
+  private seatVote(sock: Sock, yes: boolean) {
+    const room = this.room(sock);
+    if (!room?.seat || room.seat.stage !== "vote") return;
+    if (!yes) {
+      // Anonymous on purpose — nobody needs to know who said no.
+      this.closeSeat(room, "Not everyone wanted to add someone right now.");
+      return;
+    }
+    room.seat.yes.add(sock.id);
+    this.checkSeatVotes(room);
+  }
+
+  private checkSeatVotes(room: Room) {
+    const seat = room.seat;
+    if (!seat || seat.stage !== "vote") return;
+    if (![...room.members.keys()].every((id) => seat.yes.has(id))) return this.pushSeat(room);
+    clearTimeout(seat.timer);
+    if (room.members.size >= room.size) {
+      room.size = Math.min(MAX_ROOM, room.size + 1) as RoomSize;
+      seat.grew = true;
+      this.io.to(room.id).emit("room:size", { size: room.size });
+    }
+    const ms = seat.mode === "link" ? SEAT_LINK_MS : SEAT_MATCH_MS;
+    seat.stage = "open";
+    seat.deadline = Date.now() + ms;
+    seat.timer = setTimeout(
+      () => this.closeSeat(room, seat.mode === "link" ? "The invite link expired." : "Couldn't find anyone right now — try again in a bit."),
+      ms,
+    );
+    if (seat.mode === "link") {
+      seat.token = randomUUID();
+      this.links.set(seat.token, room.id);
+    }
+    this.pushSeat(room);
+    if (seat.mode === "match") this.rematchWaiting(); // fill it right away if someone's queued
+  }
+
+  /** filled=true: someone took the seat (keep the bigger size). Otherwise shrink back. */
+  private closeSeat(room: Room, message: string | null, filled = false) {
+    const seat = room.seat;
+    if (!seat) return;
+    clearTimeout(seat.timer);
+    if (seat.token) this.links.delete(seat.token);
+    room.seat = null;
+    if (!filled) {
+      room.seatCooldownUntil = Date.now() + SEAT_COOLDOWN_MS;
+      if (seat.grew && room.size > Math.max(2, room.members.size)) {
+        room.size = Math.max(2, room.members.size) as RoomSize;
+        this.io.to(room.id).emit("room:size", { size: room.size });
+      }
+    }
+    this.io.to(room.id).emit("room:seat", null);
+    if (message) this.io.to(room.id).emit("seat:result", { ok: false, message });
+  }
+
+  private pushSeat(room: Room) {
+    const s = room.seat;
+    if (!s) return;
+    for (const m of room.members.values()) {
+      const view: SeatState = { stage: s.stage, mode: s.mode, by: s.by, vibe: s.vibe, yes: [...s.yes], deadline: s.deadline, size: room.size };
+      if (s.token && m.id === s.by) view.token = s.token; // only the person who asked gets the link
+      m.sock.emit("room:seat", view);
+    }
+  }
+
+  private linkJoin(sock: Sock, raw: unknown) {
+    const p = raw as { token?: unknown; drink?: unknown; ageConfirmed?: unknown } | null;
+    const fail = (message: string) => sock.emit("link:result", { ok: false, message });
+    if (!p || p.ageConfirmed !== true) return fail("You must confirm you are 18+.");
+    const roomId = isUuid(p.token) ? this.links.get(p.token) : undefined;
+    const room = roomId ? this.rooms.get(roomId) : undefined;
+    const seat = room?.seat;
+    if (!room || !seat || seat.mode !== "link" || seat.token !== p.token || room.members.size >= room.size) {
+      return fail("This invite has expired or was already used.");
+    }
+    const d = sock.data as SockData;
+    for (const m of room.members.values()) {
+      const md = m.sock.data as SockData;
+      if (this.store.isBlocked(d.deviceId, md.deviceId)) return fail("You can't join this table.");
+      if (m.id === sock.id) return fail("You're already at this table.");
+    }
+    const drink = (DRINKS.includes(p.drink as Drink) ? p.drink : "sober") as Drink;
+    this.waiting.delete(sock.id);
+    this.leaveRoom(sock);
+    this.addToRoom(room, sock, { drink, vibe: room.vibe }, true);
+    this.closeSeat(room, null, true); // single use
+    sock.emit("link:result", { ok: true, message: "You're in!" });
+  }
+
   // ── safety ────────────────────────────────────────────────────────────────
   private report(sock: Sock, raw: unknown) {
     const p = raw as { peerId?: unknown; reason?: unknown } | null;
@@ -475,11 +687,14 @@ export class Hub {
     if (!target || target.id === sock.id) return;
     const d = sock.data as SockData;
     const td = target.data as SockData;
-    console.warn(`[report] ${d.deviceId.slice(0, 8)} → ${td.deviceId.slice(0, 8)} (${p.reason})`);
-    const until = this.store.report(d.deviceId, td.deviceId, td.ip);
+    const metAt = d.met.get(target.id)?.ts ?? Date.now();
+    const counts = Date.now() - metAt >= config.reportMinEncounterSec * 1000;
+    const priority = p.reason === "minor" || p.reason === "nudity";
+    // Structured log line → searchable in Render logs until a real review dashboard exists.
+    console.warn(JSON.stringify({ evt: "report", priority, reason: p.reason, reporter: d.deviceId.slice(0, 8), target: td.deviceId.slice(0, 8), counted: counts, ts: new Date().toISOString() }));
+    const until = this.store.report(d.deviceId, d.ip, td.deviceId, td.ip, String(p.reason), counts);
     sock.emit("report:ok");
     // Reporter never gets matched with them again (store.report blocks the pair).
-    // A single report can't kick anyone (that would be an abuse vector); N distinct reporters ban.
     if (until) {
       for (const s of this.otherSockets(td.deviceId)) {
         s.emit("banned", { until });

@@ -7,6 +7,9 @@ import { Room } from "./components/Room";
 import { Recap } from "./components/Recap";
 import { FxLayer } from "./components/Fx";
 import { GamesSheet, GiftSheet, ReportSheet, ChatSheet } from "./components/Sheets";
+import { FiltersSheet } from "./components/Filters";
+import { SeatSheet } from "./components/Seat";
+import { Legal, LEGAL_PATHS } from "./components/Legal";
 
 function Toasts() {
   const toasts = useApp((s) => s.toasts);
@@ -58,6 +61,8 @@ export default function App() {
     socket.connect();
   }, []);
 
+  const legal = LEGAL_PATHS[window.location.pathname.replace(/\/+$/, "")];
+  if (legal) return <Legal page={legal} />;
   if (bannedUntil > Date.now()) return <Banned until={bannedUntil} />;
 
   return (
@@ -75,6 +80,8 @@ export default function App() {
       {sheet === "gift" && <GiftSheet />}
       {sheet === "report" && <ReportSheet />}
       {sheet === "chat" && <ChatSheet />}
+      {sheet === "filters" && <FiltersSheet />}
+      {sheet === "seat" && <SeatSheet />}
       <FxLayer />
       <Toasts />
     </div>

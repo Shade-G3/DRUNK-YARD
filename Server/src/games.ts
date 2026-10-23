@@ -2,8 +2,9 @@
  * Server-authoritative party games. Clients only send intents (ready / answer);
  * the server owns timers, prompts, votes and scores so nobody can cheat.
  */
-import { GAME_META, GameKind, GamePhase, GameView, LIMITS } from "./shared/protocol";
+import { GAME_META, GUESS_GAMES, GameKind, GamePhase, GameView, LIMITS } from "./shared/protocol";
 import * as C from "./gameContent";
+import { scrubLinks, stripInvisible } from "./text";
 
 export interface GameHost {
   members(): string[];
@@ -17,6 +18,13 @@ const LOBBY_MS = 20_000;
 const QUESTION_MS = 15_000;
 const REVEAL_MS = 6_000;
 const DONE_MS = 8_000;
+const GUESS_MS = 60_000; // guessing window for the Instagram-style games
+const PICK_MS = 20_000; // time to pick a secret number
+const GUESS_GAP_MS = 400; // per-player guess throttle
+const GUESSES_PER_ROUND = 30; // per player, stops typing-bot spam
+const FEED_MAX = 14;
+
+type Guess = GameView["guesses"][number];
 
 export class Game {
   phase: GamePhase = "lobby";
@@ -37,6 +45,11 @@ export class Game {
   private statements: string[] = [];
   private lieIndex = -1;
   private disposed = false;
+  // guess games
+  private secret: string[] = []; // [display answer, ...aliases]  (guess_number: [number])
+  private guesses: Guess[] = [];
+  private guessStats = new Map<string, { n: number; last: number }>();
+  private solvedBy: string | null = null;
 
   constructor(public kind: GameKind, private host: GameHost, proposer: string) {
     this.ready.add(proposer);
@@ -55,6 +68,11 @@ export class Game {
     if (typeof value !== "string" || value.length > 64) return;
     const members = this.host.members();
     if (!members.includes(id)) return;
+
+    if (GUESS_GAMES.includes(this.kind)) {
+      this.guessIntent(id, value);
+      return;
+    }
 
     if (this.phase === "compose") {
       if (id !== this.turn) return;
@@ -103,7 +121,7 @@ export class Game {
       this.nextRound();
       return;
     }
-    if (this.phase === "question" && this.eligible().length && this.eligible().every((m) => this.answers.has(m))) this.toReveal();
+    if (this.phase === "question" && !GUESS_GAMES.includes(this.kind) && this.eligible().length && this.eligible().every((m) => this.answers.has(m))) this.toReveal();
     else this.host.push();
   }
 
@@ -124,6 +142,11 @@ export class Game {
       options: this.options,
       answeredBy: [...this.answers.keys()],
       myAnswer: this.answers.get(forId) ?? null,
+      duration: this.duration,
+      players: this.host.members(),
+      spotlight: this.turn,
+      secret: this.secretFor(forId),
+      guesses: GUESS_GAMES.includes(this.kind) ? this.guesses : [],
       turn: this.turn,
       reveal: this.reveal,
       scores: Object.fromEntries(this.scores),
@@ -156,6 +179,10 @@ export class Game {
       case "red_green": this.totalRounds = 8; this.deck = C.pickN(C.RED_GREEN, 8); break;
       case "truth_or_dare": this.totalRounds = Math.min(10, members.length * 2); break;
       case "two_truths": this.totalRounds = Math.min(6, members.length); break;
+      case "guess_number": this.totalRounds = Math.min(6, members.length); break;
+      case "which_animal": this.totalRounds = Math.min(6, members.length); this.deck = C.pickN(C.ANIMALS, this.totalRounds); break;
+      case "guess_object": this.totalRounds = Math.min(6, members.length); this.deck = C.pickN(C.OBJECTS, this.totalRounds); break;
+      case "emoji_decode": this.totalRounds = 8; this.deck = C.pickN(C.EMOJI_PUZZLES, 8); break;
     }
     this.nextRound();
   }
@@ -170,6 +197,10 @@ export class Game {
     this.answers.clear();
     this.reveal = null;
     this.turn = null;
+    this.secret = [];
+    this.guesses = [];
+    this.guessStats.clear();
+    this.solvedBy = null;
     const i = this.round - 1;
 
     switch (this.kind) {
@@ -207,6 +238,42 @@ export class Game {
         this.arm(60_000, () => this.nextRound()); // author timed out → skip
         this.host.push();
         return;
+      case "guess_number":
+        this.turn = this.nextTurn();
+        this.prompt = `${this.host.handle(this.turn)} is picking a secret number (1–100)…`;
+        this.options = [];
+        this.phase = "compose";
+        this.arm(PICK_MS, () => this.startNumber(String(1 + Math.floor(Math.random() * 100))));
+        this.host.push();
+        return;
+      case "which_animal":
+        this.turn = this.nextTurn();
+        this.secret = this.deck[i] as string[];
+        this.prompt = `${this.host.handle(this.turn)} is a mystery animal! Answer their yes/no questions out loud.`;
+        this.options = [];
+        this.phase = "question";
+        this.arm(GUESS_MS, () => this.toReveal());
+        this.host.push();
+        return;
+      case "guess_object":
+        this.turn = this.nextTurn();
+        this.secret = this.deck[i] as string[];
+        this.prompt = `${this.host.handle(this.turn)} is describing something — don't let them say the word!`;
+        this.options = [];
+        this.phase = "question";
+        this.arm(GUESS_MS, () => this.toReveal());
+        this.host.push();
+        return;
+      case "emoji_decode": {
+        const [clue, ...answer] = this.deck[i] as string[];
+        this.secret = answer;
+        this.prompt = clue;
+        this.options = [];
+        this.phase = "question";
+        this.arm(40_000, () => this.toReveal());
+        this.host.push();
+        return;
+      }
     }
     this.phase = "question";
     this.arm(this.kind === "truth_or_dare" ? 20_000 : QUESTION_MS, () => this.toReveal());
@@ -227,6 +294,31 @@ export class Game {
     const answers = Object.fromEntries(this.answers);
     let note = "";
     const add = (id: string, n = 1) => this.scores.set(id, (this.scores.get(id) ?? 0) + n);
+
+    if (GUESS_GAMES.includes(this.kind)) {
+      const ans = this.secret[0] ?? "?";
+      const who = this.solvedBy ? this.host.handle(this.solvedBy) : null;
+      switch (this.kind) {
+        case "guess_number":
+          note = who ? `${who} cracked it — the number was ${ans}!` : `Nobody got it — the number was ${ans}. ${this.host.handle(this.turn ?? "")} gets a point.`;
+          if (!who && this.turn) add(this.turn);
+          break;
+        case "which_animal":
+          note = who ? `Yes! ${who} was a ${ans}.` : `Time's up — ${this.turn ? this.host.handle(this.turn) : "you"} was a ${ans}.`;
+          break;
+        case "guess_object":
+          note = who ? `${who} got it — it was ${withArticle(ans)}!` : `Time's up — it was ${withArticle(ans)}.`;
+          break;
+        case "emoji_decode":
+          note = who ? `${who} decoded it: ${ans}` : `Nobody got it — it was ${ans}.`;
+          break;
+      }
+      this.phase = "reveal";
+      this.reveal = { answers: {}, note };
+      this.arm(REVEAL_MS, () => this.nextRound());
+      this.host.push();
+      return;
+    }
 
     switch (this.kind) {
       case "this_or_that":
@@ -312,9 +404,82 @@ export class Game {
     this.host.push();
   }
 
+  // ── guess games ───────────────────────────────────────────────────────────
+  private guessIntent(id: string, value: string) {
+    if (this.phase === "compose" && this.kind === "guess_number") {
+      if (id !== this.turn) return;
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 1 || n > 100) return;
+      this.startNumber(String(n));
+      return;
+    }
+    if (this.phase !== "question" || this.solvedBy || !this.canAnswer(id)) return;
+
+    const now = Date.now();
+    const st = this.guessStats.get(id) ?? { n: 0, last: 0 };
+    if (now - st.last < GUESS_GAP_MS || st.n >= GUESSES_PER_ROUND) return;
+    const text = scrubLinks(stripInvisible(value).replace(/\s+/g, " ").trim().slice(0, LIMITS.guessMax));
+    if (!text) return;
+
+    let verdict: Guess["verdict"];
+    if (this.kind === "guess_number") {
+      const n = Number(text);
+      if (!Number.isInteger(n) || n < 1 || n > 100) return;
+      const target = Number(this.secret[0]);
+      verdict = n === target ? "correct" : n < target ? "higher" : "lower";
+    } else {
+      verdict = C.matches(text, this.secret) ? "correct" : "wrong";
+    }
+    st.n += 1;
+    st.last = now;
+    this.guessStats.set(id, st);
+    // Never echo the answer back before the reveal (e.g. a describer leaking the word).
+    this.guesses = [...this.guesses, { from: id, text: verdict === "correct" ? "✓" : text, verdict }].slice(-FEED_MAX);
+
+    if (verdict === "correct") {
+      this.solvedBy = id;
+      const add = (who: string, n: number) => this.scores.set(who, (this.scores.get(who) ?? 0) + n);
+      if (this.kind === "which_animal") add(id, 2);
+      else {
+        add(id, 2);
+        if (this.kind === "guess_object" && this.turn) add(this.turn, 1);
+      }
+      this.toReveal();
+      return;
+    }
+    this.host.push();
+  }
+
+  private startNumber(n: string) {
+    if (this.phase !== "compose" || this.kind !== "guess_number") return;
+    this.secret = [n];
+    this.prompt = `${this.host.handle(this.turn ?? "")} picked a number from 1–100. Guess it!`;
+    this.phase = "question";
+    this.arm(45_000, () => this.toReveal());
+    this.host.push();
+  }
+
+  /** Who may see the secret: depends on the game. Everyone sees it at the reveal. */
+  private secretFor(forId: string): string | null {
+    if (!GUESS_GAMES.includes(this.kind) || !this.secret.length) return null;
+    if (this.phase === "reveal") return this.secret[0];
+    if (this.phase !== "question" && this.phase !== "compose") return null;
+    switch (this.kind) {
+      case "guess_number":
+      case "guess_object":
+        return forId === this.turn ? this.secret[0] : null;
+      case "which_animal":
+        return forId === this.turn ? null : this.secret[0];
+      default:
+        return null; // emoji_decode: nobody until the reveal
+    }
+  }
+
   private canAnswer(id: string): boolean {
     if (this.kind === "truth_or_dare") return id === this.turn;
     if (this.kind === "two_truths") return id !== this.turn;
+    if (this.kind === "which_animal") return id === this.turn;
+    if (this.kind === "guess_number" || this.kind === "guess_object") return id !== this.turn;
     return true;
   }
 
@@ -328,9 +493,24 @@ export class Game {
     return this.options.includes(v);
   }
 
+  act() {
+    /* classic games use game:answer */
+  }
+
+  locksChat() {
+    return false;
+  }
+
+  private duration = LOBBY_MS;
+
   private arm(ms: number, fn: () => void) {
     if (this.timer) clearTimeout(this.timer);
     this.deadline = Date.now() + ms;
+    this.duration = ms;
     this.timer = setTimeout(fn, ms);
   }
+}
+
+function withArticle(word: string): string {
+  return /^(scissors|sunglasses|headphones|keys|shoes)$/i.test(word) ? word : `${/^[aeiou]/i.test(word) ? "an" : "a"} ${word}`;
 }

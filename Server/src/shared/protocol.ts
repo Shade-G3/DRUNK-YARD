@@ -97,6 +97,12 @@ export const GAME_KINDS = [
   "red_green",
   "would_you_rather",
   "truth_or_dare",
+  "guess_number",
+  "which_animal",
+  "guess_object",
+  "emoji_decode",
+  "imposter",
+  "bluff",
 ] as const;
 export type GameKind = (typeof GAME_KINDS)[number];
 
@@ -117,7 +123,54 @@ export const GAME_META: Record<GameKind, GameMeta> = {
   red_green: { kind: "red_green", name: "Red Flag / Green Flag", short: "RG", desc: "Judge the dating takes", min: 2, color: "#F49BC1" },
   would_you_rather: { kind: "would_you_rather", name: "Would You Rather", short: "WR", desc: "Pick a side, defend it", min: 2, color: "#B9A4FF" },
   truth_or_dare: { kind: "truth_or_dare", name: "Truth or Dare", short: "TD", desc: "Spicy pack in Flirty rooms only", min: 2, color: "#F4F1EA" },
+  guess_number: { kind: "guess_number", name: "Guess My Number", short: "#?", desc: "Pick 1–100, they guess: higher or lower", min: 2, color: "#7FE0C2" },
+  which_animal: { kind: "which_animal", name: "Which Animal Am I?", short: "AN", desc: "Everyone sees it but you. Ask yes/no!", min: 2, color: "#FFB27A" },
+  guess_object: { kind: "guess_object", name: "Guess My Object", short: "OB", desc: "Describe it without saying it", min: 2, color: "#9FD0FF" },
+  emoji_decode: { kind: "emoji_decode", name: "Emoji Decode", short: "EM", desc: "Bollywood & songs in emojis — fastest wins", min: 2, color: "#FFE07A" },
+  imposter: { kind: "imposter", name: "Catch the Imposter", short: "IM", desc: "One of you has a different word. Find them.", min: 4, color: "#FF8FA3" },
+  bluff: { kind: "bluff", name: "Bluff", short: "BL", desc: "Cards face down. Lie with a straight face.", min: 2, color: "#E8D7B0" },
 };
+
+export const IMPOSTER_MODES = ["undercover", "blank"] as const;
+export type ImposterMode = (typeof IMPOSTER_MODES)[number];
+
+// ─── Bluff (Indian style) ────────────────────────────────────────────────────
+export const BLUFF_RANKS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"] as const;
+export type BluffRank = (typeof BLUFF_RANKS)[number];
+export const BLUFF_SUITS = ["S", "H", "D", "C"] as const;
+export type BluffSuit = (typeof BLUFF_SUITS)[number];
+export interface Card {
+  id: number;
+  rank: BluffRank;
+  suit: BluffSuit;
+}
+
+export interface BluffView {
+  hand: Card[]; // only YOUR cards
+  counts: Record<string, number>; // everyone's card count
+  ranks: BluffRank[]; // ranks in this deck
+  pile: number; // cards face down on the table
+  rank: BluffRank | null; // claimed rank of the current set (null = next player picks)
+  last: { by: string; count: number; rank: BluffRank } | null; // last play — can be called while non-null
+  playableAt: number; // epoch ms: next play allowed (gives everyone a moment to shout Bluff)
+  reveal: { by: string; caller: string; cards: Card[]; truthful: boolean; ts: number } | null;
+  log: string[];
+  endsAt: number; // hard cap for the whole game
+}
+
+export interface ImposterView {
+  mode: ImposterMode;
+  word: string | null; // what YOU see (null = you're the blank imposter, or spectating)
+  youAreImposter: boolean; // only ever true in blank mode (undercover doesn't know)
+  stage: "clue" | "vote" | "lastguess" | "reveal";
+  clueRound: number; // 1..2
+  votes: string[]; // who has voted (targets hidden until reveal)
+  myVote: string | null;
+  result: { imposter: string; word: string; imposterWord: string | null; caught: boolean; guess: string | null; tally: Record<string, number> } | null;
+}
+
+/** Games where players type free-text / number guesses (shown as a live guess feed). */
+export const GUESS_GAMES: readonly GameKind[] = ["guess_number", "which_animal", "guess_object", "emoji_decode"];
 
 export type GamePhase = "lobby" | "compose" | "question" | "reveal" | "done";
 
@@ -128,6 +181,8 @@ export interface GameView {
   round: number;
   totalRounds: number;
   deadline: number; // epoch ms
+  /** Length of the current phase in ms (drives the timer bar). */
+  duration?: number;
   ready: string[]; // socket ids
   prompt: string;
   options: string[]; // button labels (for player-vote games: empty; client uses players)
@@ -137,6 +192,29 @@ export interface GameView {
   reveal: { answers: Record<string, string>; note: string } | null;
   scores: Record<string, number>;
   spicy: boolean;
+  /** Guess games: the hidden word/number as THIS viewer is allowed to see it (null = hidden from you). */
+  secret: string | null;
+  /** Guess games: latest guesses with the server's verdict. */
+  guesses: { from: string; text: string; verdict: "higher" | "lower" | "correct" | "wrong" }[];
+  /** Who is actually playing (people who walk in mid-game spectate). */
+  players: string[];
+  /** Tile to highlight right now (clue giver, person who just played cards…). */
+  spotlight: string | null;
+  imposter?: ImposterView;
+  bluff?: BluffView;
+}
+
+// ─── Adding someone to a room ────────────────────────────────────────────────
+export interface SeatState {
+  stage: "vote" | "open";
+  mode: "match" | "link";
+  by: string; // who asked
+  vibe: Vibe; // match mode: which vibe we're looking for
+  yes: string[]; // who agreed (vote stage)
+  deadline: number;
+  size: RoomSize; // room size once the seat opens
+  /** Link mode, only sent to the person who asked: the invite token for the share link. */
+  token?: string;
 }
 
 // ─── Wire types ──────────────────────────────────────────────────────────────
@@ -154,6 +232,8 @@ export interface JoinRequest {
   size: RoomSize;
   ageConfirmed: boolean;
   anyone?: boolean; // fallback: ignore vibe
+  /** Happy to be dropped into a table that's already chatting (an "Add someone" seat). */
+  ongoing?: boolean;
 }
 
 export interface RoomJoined {
@@ -164,6 +244,8 @@ export interface RoomJoined {
   peers: PeerInfo[];
   /** Peers this client must send WebRTC offers to (later joiner always offers). */
   initiate: string[];
+  /** You took an open seat at a table that was already chatting. */
+  ongoing?: boolean;
 }
 
 export interface GiftLanded {
@@ -223,6 +305,10 @@ export interface ServerToClient {
   "callagain:invite": (c: { token: string; handle: string }) => void;
   "callagain:result": (c: { ok: boolean; message: string }) => void;
   "report:ok": () => void;
+  "room:seat": (s: SeatState | null) => void;
+  "room:size": (s: { size: RoomSize }) => void;
+  "seat:result": (r: { ok: boolean; message: string }) => void;
+  "link:result": (r: { ok: boolean; message: string }) => void;
   banned: (b: { until: number }) => void;
 }
 
@@ -234,7 +320,15 @@ export interface ClientToServer {
   signal: (s: { to: string; data: SignalData }) => void;
   "chat:send": (m: { text: string }) => void;
   react: (r: { kind: Reaction }) => void;
-  "game:propose": (g: { kind: GameKind }) => void;
+  "game:propose": (g: { kind: GameKind; mode?: ImposterMode }) => void;
+  /** Card / imposter actions. */
+  "game:act": (a: { type: "play"; cards: number[]; rank: BluffRank } | { type: "pass" } | { type: "bluff" } | { type: "next" } | { type: "vote"; target: string } | { type: "guess"; text: string }) => void;
+  /** Ask the table to open one more seat (everyone must agree). */
+  "seat:request": (r: { mode: "match" | "link"; vibe: Vibe }) => void;
+  "seat:vote": (v: { yes: boolean }) => void;
+  "seat:cancel": () => void;
+  /** Join a friend's table from an invite link. */
+  "link:join": (j: { token: string; drink: Drink; ageConfirmed: boolean }) => void;
   "game:ready": () => void;
   "game:answer": (a: { value: string; statements?: string[] }) => void;
   "game:stop": () => void;
@@ -243,9 +337,12 @@ export interface ClientToServer {
   "callagain:request": (c: { token: string }) => void;
   "callagain:accept": (c: { token: string }) => void;
   report: (r: { peerId: string; reason: ReportReason }) => void;
+  /** GDPR/DPDP right to erasure: wipe this device's coins, shelf, cheers and mutual links. */
+  "account:delete": (cb: (ok: boolean) => void) => void;
 }
 
 export const LIMITS = {
   chatMax: 300,
   statementMax: 90,
+  guessMax: 40,
 } as const;

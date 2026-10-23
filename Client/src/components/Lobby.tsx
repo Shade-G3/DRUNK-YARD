@@ -1,9 +1,11 @@
+import { FilterBar } from "./Filters";
 import { useEffect } from "react";
 import { DRINKS, DRINK_LABEL, VIBES, VIBE_LABEL, RoomSize, TierIndex } from "@shared/protocol";
 import { useApp } from "../state";
 import { StreamVideo } from "./Video";
 import { DrinkGlass, DOT, Bottle, Silhouette } from "./Art";
 import * as I from "./Icons";
+import { LegalFooter } from "./Legal";
 
 const BAR_COPY = {
   whisky: { kicker: "BAR MODE · OAK & AMBER", title: "Whisky night.", sub: "Slow pours, long talks. Your rooms glow amber.", cta: "Pour me a room" },
@@ -26,8 +28,8 @@ export function ThemeToggle() {
 }
 
 export function Lobby() {
-  const { prefs, setPref, local, camError, mic, cam, me, online, connected } = useApp();
-  const { startCamera, toggleMic, toggleCam, findRoom, shuffleName } = useApp.getState();
+  const { prefs, setPref, local, camError, camStarting, mic, cam, me, online, connected, invite } = useApp();
+  const { startCamera, toggleMic, toggleCam, findRoom, shuffleName, joinViaLink } = useApp.getState();
   const barActive = prefs.bar && prefs.drink !== "sober";
   const copy = BAR_COPY[prefs.drink];
 
@@ -56,6 +58,14 @@ export function Lobby() {
         {!barActive && <ThemeToggle />}
       </header>
 
+      {invite && (
+        <div className="invite-banner" role="status">
+          <I.UserPlus size={18} />
+          <span>
+            <b>You’ve been invited to a table.</b> Pick your drink, confirm you’re 18+ and hop in.
+          </span>
+        </div>
+      )}
       <div className="lobby-body">
         <div className="lobby-col">
           <section className="preview" aria-label="Camera preview">
@@ -65,8 +75,8 @@ export function Lobby() {
               <div className="cam-error">
                 <I.CamOff size={28} />
                 <span>{camError}</span>
-                <button className="btn" onClick={() => void startCamera()}>
-                  Try again
+                <button className="btn" disabled={camStarting} onClick={() => void startCamera()}>
+                  {camStarting ? "Starting camera…" : "Try again"}
                 </button>
               </div>
             ) : (
@@ -92,6 +102,7 @@ export function Lobby() {
               </div>
             )}
           </section>
+          {local && <FilterBar />}
 
           <section className="bar-hero desk-only">
             <DrinkGlass drink={prefs.drink} size={96} />
@@ -174,12 +185,37 @@ export function Lobby() {
             <label className="age">
               <input type="checkbox" checked={prefs.ageOk} onChange={(e) => setPref("ageOk", e.target.checked)} />
               <span>
-                I’m 18+ and agree to the Yard Rules: be kind, keep it clothed, no minors. Reported users get banned.
+                I’m 18+ and agree to the <a href="/rules">Yard Rules</a>, <a href="/terms">Terms</a> and{" "}
+                <a href="/privacy">Privacy Policy</a>. Be kind, keep it clothed, no minors.
               </span>
             </label>
-            <button className="btn-primary" onClick={() => void findRoom()} disabled={!prefs.ageOk}>
-              {ctaText} <I.Arrow />
-            </button>
+            <label className="age">
+              <input type="checkbox" checked={prefs.hideIp} onChange={(e) => setPref("hideIp", e.target.checked)} />
+              <span>
+                <b>Hide my IP from strangers</b> — video goes through our encrypted relay (may add a little delay).
+              </span>
+            </label>
+            <label className="age">
+              <input type="checkbox" checked={prefs.ongoing} onChange={(e) => setPref("ongoing", e.target.checked)} />
+              <span>
+                <b>Happy to join a table that’s already chatting</b> — when a group adds a seat, you might get pulled in.
+              </span>
+            </label>
+            {invite ? (
+              <>
+                <button className="btn-primary" onClick={() => void joinViaLink()} disabled={!prefs.ageOk}>
+                  Join your friend’s table <I.Arrow />
+                </button>
+                <button className="btn" onClick={() => useApp.setState({ invite: null })}>
+                  No thanks, just find someone
+                </button>
+              </>
+            ) : (
+              <button className="btn-primary" onClick={() => void findRoom()} disabled={!prefs.ageOk}>
+                {ctaText} <I.Arrow />
+              </button>
+            )}
+            <LegalFooter />
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
+import { FilterPipeline, isFilterId, type FilterId } from "./lib/filters";
 import { create } from "zustand";
 import type {
-  ChatMsg, Drink, GameView, GiftLanded, Me, PeerInfo, Reaction, RoomJoined, RoomSize, Shelf, TierIndex, Vibe,
+  ChatMsg, Drink, GameView, GiftLanded, Me, PeerInfo, Reaction, RoomJoined, RoomSize, SeatState, Shelf, TierIndex, Vibe,
 } from "@shared/protocol";
 import { socket, fetchIceServers } from "./lib/socket";
 import { Mesh } from "./lib/rtc";
@@ -8,7 +9,7 @@ import { storage } from "./lib/storage";
 import * as sfx from "./lib/sound";
 
 export type Screen = "lobby" | "searching" | "room" | "recap";
-export type Sheet = null | "games" | "gift" | "report" | "chat";
+export type Sheet = null | "games" | "gift" | "report" | "chat" | "filters" | "seat";
 
 export interface Effect {
   id: number;
@@ -53,6 +54,10 @@ interface Prefs {
   drink: Drink;
   ageOk: boolean;
   sound: boolean;
+  hideIp: boolean;
+  filter: FilterId;
+  /** OK to be dropped into a table that's already chatting ("Add someone" seats). */
+  ongoing: boolean;
 }
 
 interface State {
@@ -68,6 +73,7 @@ interface State {
   mic: boolean;
   cam: boolean;
   camError: string | null;
+  camStarting: boolean;
   startCamera: () => Promise<boolean>;
   toggleMic: () => void;
   toggleCam: () => void;
@@ -75,6 +81,9 @@ interface State {
   screen: Screen;
   searchSince: number;
   room: RoomState | null;
+  seat: SeatState | null;
+  invite: string | null;
+  joinViaLink: () => Promise<void>;
   streams: Record<string, MediaStream>;
   conn: Record<string, RTCPeerConnectionState>;
   chat: (ChatMsg & { sys?: boolean })[];
@@ -110,9 +119,115 @@ const DEFAULT_PREFS: Prefs = {
   drink: "beer",
   ageOk: false,
   sound: true,
+  hideIp: false,
+  filter: "none",
+  ongoing: false,
 };
 
+/** Friend invite links look like https://…/?join=<uuid>. Read once, then clean the URL. */
+function readInvite(): string | null {
+  try {
+    const t = new URLSearchParams(window.location.search).get("join");
+    if (t && /^[0-9a-f-]{36}$/i.test(t)) {
+      window.history.replaceState(null, "", window.location.pathname);
+      return t;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 let mesh: Mesh | null = null;
+let rawCam: MediaStream | null = null; // what the camera gives us
+let pipeline: FilterPipeline | null = null; // only exists while a filter is on
+
+/** Route the camera through a filter (or straight through for "none") and hot-swap it on live calls. */
+function applyFilter(f: FilterId) {
+  const set = useApp.setState;
+  if (!rawCam) return;
+  const rawVideo = rawCam.getVideoTracks()[0];
+  if (!rawVideo) return set({ local: rawCam });
+  if (f !== "none" && pipeline) {
+    pipeline.setFilter(f);
+    return;
+  }
+  const old = pipeline;
+  let out = rawCam;
+  pipeline = null;
+  if (f !== "none") {
+    try {
+      pipeline = new FilterPipeline(rawVideo, f);
+      out = new MediaStream([pipeline.track, ...rawCam.getAudioTracks()]);
+    } catch (e) {
+      console.warn("filters unavailable", e);
+      useApp.getState().toast("Filters aren’t supported in this browser.", { err: true });
+      useApp.getState().setPref("filter", "none");
+      return;
+    }
+  }
+  const cam = useApp.getState().cam;
+  out.getVideoTracks().forEach((t) => (t.enabled = cam));
+  set({ local: out });
+  mesh?.replaceVideoTrack(out.getVideoTracks()[0] ?? null);
+  old?.stop(); // stop the old canvas only after peers have the new track
+}
+let camPending: Promise<boolean> | null = null;
+
+/**
+ * Open camera + mic. Safari/Brave can reject "fancy" constraints or a busy device, so we
+ * step down to simpler requests before giving up, and show the real error so it's debuggable.
+ */
+async function openCamera(): Promise<boolean> {
+  const set = useApp.setState;
+  set({ camStarting: true, camError: null });
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      set({ camError: "This browser can’t use the camera on this page (it needs HTTPS and a modern browser)." });
+      return false;
+    }
+    const attempts: MediaStreamConstraints[] = [
+      {
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      },
+      { video: true, audio: true },
+      { video: true, audio: false },
+    ];
+    let last: unknown = null;
+    for (const c of attempts) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia(c);
+        rawCam = s;
+        set({ local: s, camError: null, mic: s.getAudioTracks().length > 0, cam: true });
+        if (useApp.getState().prefs.filter !== "none") applyFilter(useApp.getState().prefs.filter);
+        if (!s.getAudioTracks().length) useApp.getState().toast("Microphone unavailable — joined with camera only.", { err: true });
+        return true;
+      } catch (e) {
+        last = e;
+        const n = (e as DOMException)?.name;
+        if (n === "NotAllowedError" || n === "SecurityError") break; // permission problem: retrying won't help
+      }
+    }
+    const err = last as DOMException | null;
+    const name = err?.name ?? "Error";
+    const isSafari = /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
+    const msg =
+      name === "NotAllowedError" || name === "SecurityError"
+        ? isSafari
+          ? "Safari blocked the camera. Safari menu → Settings for this website → Camera & Microphone: Allow, then reload the page."
+          : "Camera blocked. Allow camera and mic for this site in your browser settings, then reload."
+        : name === "NotFoundError" || name === "OverconstrainedError"
+          ? "No usable camera found on this device."
+          : name === "NotReadableError" || name === "AbortError"
+            ? "Your camera is busy. Close other apps or tabs using it (FaceTime, Zoom, another browser), then try again."
+            : "Couldn’t start your camera.";
+    set({ camError: `${msg} (${name}${err?.message ? `: ${err.message}` : ""})` });
+    return false;
+  } finally {
+    set({ camStarting: false });
+  }
+}
 const DEFAULT_ICE: RTCIceServer[] = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }];
 let iceServers: RTCIceServer[] | null = null;
 let iceFetchedAt = 0;
@@ -128,12 +243,17 @@ let fxId = 1;
 const glowTimers: Record<string, number> = {};
 
 export const useApp = create<State>((set, get) => ({
-  prefs: { ...DEFAULT_PREFS, ...storage.get<Partial<Prefs>>("dy.prefs", {}), ageOk: false },
+  prefs: (() => {
+    const p = { ...DEFAULT_PREFS, ...storage.get<Partial<Prefs>>("dy.prefs", {}), ageOk: false };
+    if (!isFilterId(p.filter)) p.filter = "none";
+    return p;
+  })(),
   setPref: (k, v) => {
     set((s) => ({ prefs: { ...s.prefs, [k]: v } }));
     const { ageOk: _skip, ...persist } = get().prefs;
     storage.set("dy.prefs", persist);
     if (k === "sound") sfx.setSound(Boolean(v));
+    if (k === "filter") applyFilter(v as FilterId);
   },
 
   connected: false,
@@ -145,27 +265,11 @@ export const useApp = create<State>((set, get) => ({
   mic: true,
   cam: true,
   camError: null,
+  camStarting: false,
   startCamera: async () => {
     if (get().local) return true;
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24, max: 30 }, facingMode: "user" },
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-      set({ local: s, camError: null, mic: true, cam: true });
-      return true;
-    } catch (e) {
-      const name = (e as DOMException)?.name;
-      set({
-        camError:
-          name === "NotAllowedError"
-            ? "Camera blocked. Allow camera and mic in your browser settings, then try again."
-            : name === "NotFoundError"
-              ? "No camera found on this device."
-              : "Couldn't start your camera. Is another app using it?",
-      });
-      return false;
-    }
+    camPending ??= openCamera().finally(() => (camPending = null));
+    return camPending;
   },
   toggleMic: () => {
     const on = !get().mic;
@@ -174,13 +278,29 @@ export const useApp = create<State>((set, get) => ({
   },
   toggleCam: () => {
     const on = !get().cam;
-    get().local?.getVideoTracks().forEach((t) => (t.enabled = on));
+    [...(get().local?.getVideoTracks() ?? []), ...(rawCam?.getVideoTracks() ?? [])].forEach((t) => (t.enabled = on));
     set({ cam: on });
   },
 
   screen: "lobby",
   searchSince: 0,
   room: null,
+  seat: null,
+  invite: readInvite(),
+  joinViaLink: async () => {
+    const { prefs, invite } = get();
+    if (!invite) return;
+    if (!prefs.ageOk) {
+      get().toast("Please confirm you're 18+ first.", { err: true });
+      return;
+    }
+    if (!(await get().startCamera())) return;
+    if (!socket.connected) socket.connect();
+    teardownRoom(false);
+    refreshIce();
+    set({ screen: "searching", searchSince: Date.now(), sheet: null });
+    socket.emit("link:join", { token: invite, drink: prefs.drink, ageConfirmed: true });
+  },
   streams: {},
   conn: {},
   chat: [],
@@ -207,7 +327,7 @@ export const useApp = create<State>((set, get) => ({
     teardownRoom(false);
     refreshIce();
     set({ screen: "searching", searchSince: Date.now(), sheet: null });
-    socket.emit("queue:join", { vibe: prefs.vibe, drink: prefs.drink, size: prefs.size, ageConfirmed: true, anyone });
+    socket.emit("queue:join", { vibe: prefs.vibe, drink: prefs.drink, size: prefs.size, ageConfirmed: true, anyone, ongoing: prefs.ongoing });
   },
   cancelSearch: () => {
     socket.emit("queue:leave");
@@ -260,7 +380,7 @@ function teardownRoom(toRecap: boolean) {
     });
   }
   useApp.setState({
-    room: null, streams: {}, conn: {}, chat: [], unread: 0, game: null, effects: [], glows: {}, sheet: null,
+    room: null, seat: null, streams: {}, conn: {}, chat: [], unread: 0, game: null, effects: [], glows: {}, sheet: null,
     screen: toRecap ? "recap" : useApp.getState().screen,
   });
 }
@@ -344,8 +464,12 @@ export function wireSocket() {
   // Must stay synchronous: room:peer-joined / signal can arrive right after this.
   socket.on("room:joined", (r: RoomJoined) => {
     mesh?.closeAll();
+    const servers = iceServers ?? DEFAULT_ICE;
+    const hasTurn = servers.some((x) => ([] as string[]).concat(x.urls).some((u) => u.startsWith("turn")));
+    const relayOnly = get().prefs.hideIp && hasTurn;
+    if (get().prefs.hideIp && !hasTurn) get().toast("“Hide my IP” needs the relay server, which isn’t set up — connecting normally.", { err: true });
     mesh = new Mesh(
-      iceServers ?? DEFAULT_ICE,
+      servers,
       () => get().local,
       (id, stream) =>
         set((s) => {
@@ -355,12 +479,14 @@ export function wireSocket() {
           return { streams };
         }),
       (id, state) => set((s) => ({ conn: { ...s.conn, [id]: state } })),
+      relayOnly,
     );
     set({
       screen: "room",
       room: { id: r.roomId, size: r.size, vibe: r.vibe, you: r.you, peers: [], startedAt: Date.now() },
-      chat: [], game: null, effects: [], glows: {}, met: get().screen === "recap" ? {} : get().met,
+      chat: [], game: null, seat: null, invite: null, effects: [], glows: {}, met: get().screen === "recap" ? {} : get().met,
     });
+    if (r.ongoing) get().toast(`You pulled up a chair at a table that's already chatting — say hi!`, { ms: 5000 });
     sys(r.peers.length ? `You joined ${r.peers.length === 1 ? r.peers[0].handle : `${r.peers.length} people`}. Say hi!` : "You're in. Waiting for others to walk in…");
     for (const p of r.peers) addPeer(p, r.initiate.includes(p.id));
     sfx.blip();
@@ -385,6 +511,23 @@ export function wireSocket() {
     }
   });
   socket.on("signal", ({ from, data }) => void mesh?.handleSignal(from, data));
+
+  socket.on("room:seat", (seat) => {
+    const prev = get().seat;
+    set({ seat });
+    const me = get().room?.you.id;
+    if (seat?.stage === "vote" && prev?.stage !== "vote" && seat.by !== me) sfx.blip();
+    if (seat?.stage === "open" && prev?.stage === "vote") {
+      sys(seat.mode === "link" ? `Everyone agreed — ${handleOf(seat.by)} is inviting a friend.` : "Everyone agreed — finding one more person…");
+    }
+  });
+  socket.on("room:size", ({ size }) => set((s) => (s.room ? { room: { ...s.room, size } } : {})));
+  socket.on("seat:result", (r) => get().toast(r.message, { err: !r.ok }));
+  socket.on("link:result", (r) => {
+    if (r.ok) return;
+    set({ invite: null, screen: "lobby" });
+    get().toast(r.message, { err: true, ms: 6000 });
+  });
 
   socket.on("chat:msg", (m) => {
     const s = get();

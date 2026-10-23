@@ -46,8 +46,8 @@ app.use(
       directives: {
         "default-src": ["'self'"],
         "script-src": ["'self'"],
-        "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        "font-src": ["'self'", "https://fonts.gstatic.com"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "font-src": ["'self'"],
         "img-src": ["'self'", "data:", "blob:"],
         "media-src": ["'self'", "blob:"],
         "connect-src": ["'self'", "wss:", "ws:", ...config.allowedOrigins],
@@ -87,6 +87,12 @@ app.get("/api/ice", async (req, res) => {
   res.json({ iceServers: await iceServers() });
 });
 
+// JSON error responses, never stack traces.
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("[http]", err);
+  res.status(500).json({ error: "internal" });
+});
+
 // Serve the built React app (single-service deploy).
 const distCandidates = [config.clientDist, path.resolve(__dirname, "../../Client/dist")].filter(Boolean);
 const dist = distCandidates.find((p) => fs.existsSync(path.join(p, "index.html")));
@@ -112,10 +118,13 @@ const store = new Store();
 const hub = new Hub(io, store);
 const connWindow = new IpWindow(config.maxConnectionsPerIpPerMin, 60_000);
 
+const socketsPerIp = new Map<string, number>();
+
 io.use((socket, next) => {
   const ip = clientIp(socket.request);
   const deviceId = socket.handshake.auth?.deviceId;
   if (!isUuid(deviceId)) return next(new Error("bad_device"));
+  if ((socketsPerIp.get(ip) ?? 0) >= config.maxSocketsPerIp) return next(new Error("too_many_connections"));
   if (!connWindow.allow(ip)) return next(new Error("too_many_connections"));
   const until = store.banUntil(deviceId, ip);
   if (until) {
@@ -128,7 +137,20 @@ io.use((socket, next) => {
   next();
 });
 
-io.on("connection", (socket) => hub.attach(socket));
+io.on("connection", (socket) => {
+  const ip = socket.data.ip as string;
+  socketsPerIp.set(ip, (socketsPerIp.get(ip) ?? 0) + 1);
+  socket.on("disconnect", () => {
+    const n = (socketsPerIp.get(ip) ?? 1) - 1;
+    if (n > 0) socketsPerIp.set(ip, n);
+    else socketsPerIp.delete(ip);
+  });
+  hub.attach(socket);
+});
+
+// Never let one bad promise or bug take the whole yard down; log it and keep serving.
+process.on("unhandledRejection", (e) => console.error("[unhandledRejection]", e));
+process.on("uncaughtException", (e) => console.error("[uncaughtException]", e));
 
 server.listen(config.port, () => {
   console.log(`🍻 Drunk Yard server on :${config.port}`);

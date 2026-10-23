@@ -56,9 +56,23 @@ jobs:
       - name: Smoke test (match, chat, gift, leave)
         run: node Client/scripts/smoke.mjs http://localhost:3000
 
-      - name: Server log
+      - name: Adversarial + game + invite tests
+        env:
+          NODE_ENV: production
+          PORT: 3100
+          TRUST_PROXY_HOPS: 1 # lets the test pretend to be many different IPs
+          MAX_CONN_PER_IP_PER_MIN: 1000
+          REPORT_MIN_ENCOUNTER_SEC: 2
+        run: |
+          node Server/dist/index.js > attack-server.log 2>&1 &
+          sleep 2
+          node Server/test/attack.mjs http://localhost:3100
+          node Server/test/guess.mjs http://localhost:3100
+          node Server/test/party.mjs http://localhost:3100
+
+      - name: Server logs
         if: always()
-        run: cat server.log || true
+        run: cat server.log attack-server.log || true
 
   deploy:
     name: Deploy to Render
