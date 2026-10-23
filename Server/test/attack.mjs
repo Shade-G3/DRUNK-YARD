@@ -71,7 +71,7 @@ await check("Fuzzing every event with hostile payloads keeps the server alive", 
   const junk = [null, undefined, 0, -1, 1e308, NaN, "", "x".repeat(30_000), [], [1, 2], { __proto__: { admin: true } },
     JSON.parse('{"__proto__":{"polluted":1},"constructor":{"prototype":{"x":1}}}'), { to: { $gt: "" } }, { value: { toString: 1 } }, () => 1];
   const events = ["queue:join", "queue:leave", "room:leave", "name:shuffle", "signal", "chat:send", "react", "game:propose", "game:ready",
-    "game:answer", "game:stop", "gift:send", "cheers:give", "callagain:request", "callagain:accept", "report", "nonexistent:event"];
+    "game:answer", "game:stop", "gift:send", "cheers:give", "callagain:request", "callagain:accept", "report", "game:act", "seat:request", "seat:vote", "seat:cancel", "link:join", "nonexistent:event"];
   for (const ev of events) for (const j of junk) s.emit(ev, j);
   await sleep(800);
   const ok = await alive();

@@ -8,6 +8,7 @@ import { Recap } from "./components/Recap";
 import { FxLayer } from "./components/Fx";
 import { GamesSheet, GiftSheet, ReportSheet, ChatSheet } from "./components/Sheets";
 import { FiltersSheet } from "./components/Filters";
+import { SeatSheet } from "./components/Seat";
 import { Legal, LEGAL_PATHS } from "./components/Legal";
 
 function Toasts() {
@@ -80,6 +81,7 @@ export default function App() {
       {sheet === "report" && <ReportSheet />}
       {sheet === "chat" && <ChatSheet />}
       {sheet === "filters" && <FiltersSheet />}
+      {sheet === "seat" && <SeatSheet />}
       <FxLayer />
       <Toasts />
     </div>

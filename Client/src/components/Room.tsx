@@ -1,5 +1,6 @@
+import { SeatBar } from "./Seat";
 import { useEffect, useState } from "react";
-import { DRINK_LABEL, VIBE_LABEL, type PeerInfo, type Reaction } from "@shared/protocol";
+import { DRINK_LABEL, MAX_ROOM, VIBE_LABEL, type PeerInfo, type Reaction } from "@shared/protocol";
 import { socket } from "../lib/socket";
 import { useApp, colorFor, initials, giveCheers } from "../state";
 import { StreamVideo } from "./Video";
@@ -19,7 +20,8 @@ function useElapsed(since: number) {
 }
 
 function Tile({ peer, local }: { peer: PeerInfo; local?: boolean }) {
-  const { streams, conn, glows, met, mic, cam } = useApp();
+  const { streams, conn, glows, met, mic, cam, game } = useApp();
+  const spot = !!game && game.phase !== "lobby" && game.phase !== "done" && game.spotlight === peer.id;
   const stream = local ? useApp.getState().local : streams[peer.id] ?? null;
   const state = conn[peer.id];
   const [touch, setTouch] = useState(false);
@@ -31,7 +33,7 @@ function Tile({ peer, local }: { peer: PeerInfo; local?: boolean }) {
   return (
     <div
       id={`tile-${peer.id}`}
-      className={`tile ${local ? "local" : "remote"} ${touch ? "touch" : ""} ${glow !== undefined ? `glow-${glow}` : ""}`}
+      className={`tile ${local ? "local" : "remote"} ${touch ? "touch" : ""} ${glow !== undefined ? `glow-${glow}` : ""} ${spot ? "spotlight" : ""}`}
       onClick={() => !local && setTouch((t) => !t)}
     >
       {showVideo && <StreamVideo stream={stream} muted={local} />}
@@ -91,7 +93,7 @@ const REACTS: { kind: Reaction; icon: JSX.Element; color: string; label: string 
 ];
 
 export function Room() {
-  const { room, game, sideTab, unread, mic, cam, prefs } = useApp();
+  const { room, game, sideTab, unread, mic, cam, prefs, seat } = useApp();
   const { toggleMic, toggleCam, openSheet, setSideTab, next, leave } = useApp.getState();
   const elapsed = useElapsed(room?.startedAt ?? Date.now());
   const [gameMin, setGameMin] = useState(false);
@@ -117,13 +119,19 @@ export function Room() {
           </span>
         </div>
         <span className="spacer" />
-        {!duo && n < room.size && (
+        {!duo && n < room.size && !seat && (
           <span className="muted desk-only" style={{ fontSize: 13 }}>
             Open seats: {room.size - n}
           </span>
         )}
+        {room.peers.length > 0 && n < MAX_ROOM && (
+          <button className="pill add-btn" onClick={() => openSheet("seat")} disabled={!!seat} aria-label="Add someone to the table">
+            <I.UserPlus size={16} /> <span>Add</span>
+          </button>
+        )}
         {!(prefs.bar && prefs.drink !== "sober") && <ThemeToggle />}
       </header>
+      <SeatBar />
 
       <div className="stage-wrap">
         <div className="stage">

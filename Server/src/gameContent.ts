@@ -1,3 +1,4 @@
+import { randomInt } from "crypto";
 /**
  * Prompt decks. Kept PG-13 on purpose: no prompt rewards actually drinking
  * ("take a shot if…") — that is a safety + app-store red line.
@@ -135,10 +136,20 @@ export const SPICY_DARES: string[] = [
   "Serenade the room with one romantic line from a song.",
 ];
 
+/** Crypto-grade shuffle — card games must not be predictable from Math.random. */
+export function shuffle<T>(arr: T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
 export function pickN<T>(arr: T[], n: number): T[] {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(i + 1);
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   const out: T[] = [];
@@ -198,3 +209,15 @@ export function matches(guess: string, accepted: string[]): boolean {
   const g = normalizeGuess(guess);
   return !!g && accepted.some((a) => normalizeGuess(a) === g);
 }
+
+// ── Catch the Imposter: [everyone's word, the undercover's word] ─────────────
+export const WORD_PAIRS: [string, string][] = [
+  ["Goa", "Manali"], ["Chai", "Coffee"], ["Samosa", "Kachori"], ["Cricket", "Football"], ["Biryani", "Pulao"],
+  ["Shah Rukh Khan", "Salman Khan"], ["Instagram", "Snapchat"], ["Metro", "Bus"], ["Wedding", "Birthday party"],
+  ["Diwali", "Holi"], ["Pani puri", "Bhel puri"], ["Netflix", "YouTube"], ["Beach", "Swimming pool"],
+  ["Gym", "Yoga"], ["Dog", "Cat"], ["Pizza", "Burger"], ["Mumbai", "Delhi"], ["Exam", "Interview"],
+  ["Auto rickshaw", "Taxi"], ["Rain", "Snow"], ["Guitar", "Piano"], ["WhatsApp", "Telegram"], ["Maggi", "Pasta"],
+  ["Ex", "Crush"], ["Hangover", "Jet lag"], ["Mango", "Banana"], ["Hostel", "PG"], ["Tinder", "Shaadi.com"],
+  ["Beer", "Whisky"], ["Dosa", "Uttapam"], ["Harry Potter", "Lord of the Rings"], ["Train", "Flight"],
+  ["Moon", "Sun"], ["Doctor", "Nurse"], ["Lipstick", "Nail paint"], ["Office", "College"],
+];

@@ -142,6 +142,9 @@ export class Game {
       options: this.options,
       answeredBy: [...this.answers.keys()],
       myAnswer: this.answers.get(forId) ?? null,
+      duration: this.duration,
+      players: this.host.members(),
+      spotlight: this.turn,
       secret: this.secretFor(forId),
       guesses: GUESS_GAMES.includes(this.kind) ? this.guesses : [],
       turn: this.turn,
@@ -490,9 +493,20 @@ export class Game {
     return this.options.includes(v);
   }
 
+  act() {
+    /* classic games use game:answer */
+  }
+
+  locksChat() {
+    return false;
+  }
+
+  private duration = LOBBY_MS;
+
   private arm(ms: number, fn: () => void) {
     if (this.timer) clearTimeout(this.timer);
     this.deadline = Date.now() + ms;
+    this.duration = ms;
     this.timer = setTimeout(fn, ms);
   }
 }

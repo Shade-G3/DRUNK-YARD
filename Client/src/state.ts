@@ -1,7 +1,7 @@
 import { FilterPipeline, isFilterId, type FilterId } from "./lib/filters";
 import { create } from "zustand";
 import type {
-  ChatMsg, Drink, GameView, GiftLanded, Me, PeerInfo, Reaction, RoomJoined, RoomSize, Shelf, TierIndex, Vibe,
+  ChatMsg, Drink, GameView, GiftLanded, Me, PeerInfo, Reaction, RoomJoined, RoomSize, SeatState, Shelf, TierIndex, Vibe,
 } from "@shared/protocol";
 import { socket, fetchIceServers } from "./lib/socket";
 import { Mesh } from "./lib/rtc";
@@ -9,7 +9,7 @@ import { storage } from "./lib/storage";
 import * as sfx from "./lib/sound";
 
 export type Screen = "lobby" | "searching" | "room" | "recap";
-export type Sheet = null | "games" | "gift" | "report" | "chat" | "filters";
+export type Sheet = null | "games" | "gift" | "report" | "chat" | "filters" | "seat";
 
 export interface Effect {
   id: number;
@@ -56,6 +56,8 @@ interface Prefs {
   sound: boolean;
   hideIp: boolean;
   filter: FilterId;
+  /** OK to be dropped into a table that's already chatting ("Add someone" seats). */
+  ongoing: boolean;
 }
 
 interface State {
@@ -79,6 +81,9 @@ interface State {
   screen: Screen;
   searchSince: number;
   room: RoomState | null;
+  seat: SeatState | null;
+  invite: string | null;
+  joinViaLink: () => Promise<void>;
   streams: Record<string, MediaStream>;
   conn: Record<string, RTCPeerConnectionState>;
   chat: (ChatMsg & { sys?: boolean })[];
@@ -116,7 +121,22 @@ const DEFAULT_PREFS: Prefs = {
   sound: true,
   hideIp: false,
   filter: "none",
+  ongoing: false,
 };
+
+/** Friend invite links look like https://…/?join=<uuid>. Read once, then clean the URL. */
+function readInvite(): string | null {
+  try {
+    const t = new URLSearchParams(window.location.search).get("join");
+    if (t && /^[0-9a-f-]{36}$/i.test(t)) {
+      window.history.replaceState(null, "", window.location.pathname);
+      return t;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
 
 let mesh: Mesh | null = null;
 let rawCam: MediaStream | null = null; // what the camera gives us
@@ -265,6 +285,22 @@ export const useApp = create<State>((set, get) => ({
   screen: "lobby",
   searchSince: 0,
   room: null,
+  seat: null,
+  invite: readInvite(),
+  joinViaLink: async () => {
+    const { prefs, invite } = get();
+    if (!invite) return;
+    if (!prefs.ageOk) {
+      get().toast("Please confirm you're 18+ first.", { err: true });
+      return;
+    }
+    if (!(await get().startCamera())) return;
+    if (!socket.connected) socket.connect();
+    teardownRoom(false);
+    refreshIce();
+    set({ screen: "searching", searchSince: Date.now(), sheet: null });
+    socket.emit("link:join", { token: invite, drink: prefs.drink, ageConfirmed: true });
+  },
   streams: {},
   conn: {},
   chat: [],
@@ -291,7 +327,7 @@ export const useApp = create<State>((set, get) => ({
     teardownRoom(false);
     refreshIce();
     set({ screen: "searching", searchSince: Date.now(), sheet: null });
-    socket.emit("queue:join", { vibe: prefs.vibe, drink: prefs.drink, size: prefs.size, ageConfirmed: true, anyone });
+    socket.emit("queue:join", { vibe: prefs.vibe, drink: prefs.drink, size: prefs.size, ageConfirmed: true, anyone, ongoing: prefs.ongoing });
   },
   cancelSearch: () => {
     socket.emit("queue:leave");
@@ -344,7 +380,7 @@ function teardownRoom(toRecap: boolean) {
     });
   }
   useApp.setState({
-    room: null, streams: {}, conn: {}, chat: [], unread: 0, game: null, effects: [], glows: {}, sheet: null,
+    room: null, seat: null, streams: {}, conn: {}, chat: [], unread: 0, game: null, effects: [], glows: {}, sheet: null,
     screen: toRecap ? "recap" : useApp.getState().screen,
   });
 }
@@ -448,8 +484,9 @@ export function wireSocket() {
     set({
       screen: "room",
       room: { id: r.roomId, size: r.size, vibe: r.vibe, you: r.you, peers: [], startedAt: Date.now() },
-      chat: [], game: null, effects: [], glows: {}, met: get().screen === "recap" ? {} : get().met,
+      chat: [], game: null, seat: null, invite: null, effects: [], glows: {}, met: get().screen === "recap" ? {} : get().met,
     });
+    if (r.ongoing) get().toast(`You pulled up a chair at a table that's already chatting — say hi!`, { ms: 5000 });
     sys(r.peers.length ? `You joined ${r.peers.length === 1 ? r.peers[0].handle : `${r.peers.length} people`}. Say hi!` : "You're in. Waiting for others to walk in…");
     for (const p of r.peers) addPeer(p, r.initiate.includes(p.id));
     sfx.blip();
@@ -474,6 +511,23 @@ export function wireSocket() {
     }
   });
   socket.on("signal", ({ from, data }) => void mesh?.handleSignal(from, data));
+
+  socket.on("room:seat", (seat) => {
+    const prev = get().seat;
+    set({ seat });
+    const me = get().room?.you.id;
+    if (seat?.stage === "vote" && prev?.stage !== "vote" && seat.by !== me) sfx.blip();
+    if (seat?.stage === "open" && prev?.stage === "vote") {
+      sys(seat.mode === "link" ? `Everyone agreed — ${handleOf(seat.by)} is inviting a friend.` : "Everyone agreed — finding one more person…");
+    }
+  });
+  socket.on("room:size", ({ size }) => set((s) => (s.room ? { room: { ...s.room, size } } : {})));
+  socket.on("seat:result", (r) => get().toast(r.message, { err: !r.ok }));
+  socket.on("link:result", (r) => {
+    if (r.ok) return;
+    set({ invite: null, screen: "lobby" });
+    get().toast(r.message, { err: true, ms: 6000 });
+  });
 
   socket.on("chat:msg", (m) => {
     const s = get();

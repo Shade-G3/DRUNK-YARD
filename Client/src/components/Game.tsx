@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { BluffBoard, ImposterBoard } from "./PartyGames";
 import { GAME_KINDS, GAME_META, GUESS_GAMES, LIMITS, type GameView } from "@shared/protocol";
 import { socket } from "../lib/socket";
 import { useApp, handleOf } from "../state";
@@ -20,6 +21,27 @@ export function GamePicker({ onPicked }: { onPicked?: () => void }) {
       {GAME_KINDS.map((k) => {
         const m = GAME_META[k];
         const tooFew = count < m.min;
+        if (k === "imposter")
+          return (
+            <div key={k} className="game-item game-item-split" aria-disabled={tooFew}>
+              <span className="gi" style={{ background: m.color }}>{m.short}</span>
+              <span className="meta">
+                <b>{m.name}</b>
+                <small>{tooFew ? `Needs ${m.min}+ people — tap Add to bring more` : m.desc}</small>
+                {!tooFew && (
+                  <span className="mode-row">
+                    <button className="btn btn-sm" onClick={() => { socket.emit("game:propose", { kind: k, mode: "undercover" }); onPicked?.(); }}>
+                      Undercover word
+                    </button>
+                    <button className="btn btn-sm" onClick={() => { socket.emit("game:propose", { kind: k, mode: "blank" }); onPicked?.(); }}>
+                      Imposter gets nothing
+                    </button>
+                  </span>
+                )}
+              </span>
+              <span className="players">{m.min}–6</span>
+            </div>
+          );
         return (
           <button
             key={k}
@@ -57,7 +79,8 @@ export function GameBoard({ g }: { g: GameView }) {
 
   const answer = (value: string) => socket.emit("game:answer", { value });
   const guessGame = GUESS_GAMES.includes(g.kind);
-  const total =
+  const party = g.kind === "imposter" || g.kind === "bluff";
+  const total = g.duration ? g.duration / 1000 :
     g.phase === "lobby" ? 20
     : g.phase === "compose" ? (g.kind === "guess_number" ? 20 : 60)
     : g.phase === "reveal" ? (g.kind === "truth_or_dare" ? 30 : 6)
@@ -77,6 +100,11 @@ export function GameBoard({ g }: { g: GameView }) {
       .split(`${myHandle} says`).join("You say")
       .split(`${myHandle} wins`).join("You win")
       .split(`${myHandle} gets`).join("You get")
+      .split(`${myHandle} gives`).join("You give")
+      .split(`${myHandle} picks`).join("You pick")
+      .split(`${myHandle} starts`).join("You start")
+      .split(`${myHandle} emptied their`).join("You emptied your")
+      .split(`${myHandle}: play`).join("You: play")
       .split(myHandle).join("You");
   };
   const counts = (val: string) => (g.reveal ? Object.values(g.reveal.answers).filter((v) => v === val).length : 0);
@@ -114,8 +142,10 @@ export function GameBoard({ g }: { g: GameView }) {
       )}
 
       {guessGame && g.phase !== "lobby" && g.phase !== "done" && <GuessBoard g={g} me={me} note={note} />}
+      {g.kind === "imposter" && g.phase !== "lobby" && g.phase !== "done" && <ImposterBoard g={g} me={me} note={note} />}
+      {g.kind === "bluff" && g.phase !== "lobby" && g.phase !== "done" && <BluffBoard g={g} me={me} note={note} />}
 
-      {!guessGame && g.phase === "compose" &&
+      {!guessGame && !party && g.phase === "compose" &&
         (g.turn === me ? (
           <form
             className="compose"
@@ -148,7 +178,7 @@ export function GameBoard({ g }: { g: GameView }) {
           <p className="game-prompt display">{g.prompt}</p>
         ))}
 
-      {!guessGame && (g.phase === "question" || g.phase === "reveal") && (
+      {!guessGame && !party && (g.phase === "question" || g.phase === "reveal") && (
         <>
           <p className="game-prompt display">{g.prompt}</p>
 
@@ -222,7 +252,7 @@ export function GameBoard({ g }: { g: GameView }) {
 
       {g.phase === "done" && <div className="game-note">{note(g.reveal?.note)}</div>}
 
-      {g.phase !== "lobby" && Object.keys(g.scores).length > 0 && (
+      {g.phase !== "lobby" && !(g.kind === "bluff" && g.phase !== "done") && Object.keys(g.scores).length > 0 && (
         <div className="scores">
           {Object.entries(g.scores)
             .sort((a, b) => b[1] - a[1])
