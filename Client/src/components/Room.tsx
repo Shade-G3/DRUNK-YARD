@@ -1,4 +1,5 @@
 import { SeatBar } from "./Seat";
+import { usePipDrag } from "../lib/pip";
 import { useEffect, useState } from "react";
 import { DRINK_LABEL, MAX_ROOM, VIBE_LABEL, type PeerInfo, type Reaction } from "@shared/protocol";
 import { socket } from "../lib/socket";
@@ -19,7 +20,23 @@ function useElapsed(since: number) {
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/** Phone layout (< 700px): your own camera floats as a draggable PiP. */
+function useIsPhone() {
+  const q = "(max-width: 699px)";
+  const [m, setM] = useState(() => window.matchMedia?.(q).matches ?? false);
+  useEffect(() => {
+    const mq = window.matchMedia?.(q);
+    if (!mq) return;
+    const on = () => setM(mq.matches);
+    mq.addEventListener?.("change", on);
+    return () => mq.removeEventListener?.("change", on);
+  }, []);
+  return m;
+}
+
 function Tile({ peer, local }: { peer: PeerInfo; local?: boolean }) {
+  const isPhone = useIsPhone();
+  const pip = usePipDrag(!!local && isPhone);
   const { streams, conn, glows, met, mic, cam, game } = useApp();
   const spot = !!game && game.phase !== "lobby" && game.phase !== "done" && game.spotlight === peer.id;
   const stream = local ? useApp.getState().local : streams[peer.id] ?? null;
@@ -33,6 +50,8 @@ function Tile({ peer, local }: { peer: PeerInfo; local?: boolean }) {
   return (
     <div
       id={`tile-${peer.id}`}
+      ref={local ? pip.ref : undefined}
+      data-corner={local ? pip.corner : undefined}
       className={`tile ${local ? "local" : "remote"} ${touch ? "touch" : ""} ${glow !== undefined ? `glow-${glow}` : ""} ${spot ? "spotlight" : ""}`}
       onClick={() => !local && setTouch((t) => !t)}
     >
@@ -135,7 +154,7 @@ export function Room() {
 
       <div className="stage-wrap">
         <div className="stage">
-          <div className={`grid ${duo ? "duo" : ""}`} data-n={duo ? 2 : n}>
+          <div className={`grid ${duo ? "duo" : ""}`} data-n={duo ? 2 : n} data-r={Math.max(1, room.peers.length)}>
             {duo && room.peers.length === 0 && (
               <div className="tile remote">
                 <div className="ph">Waiting for someone…</div>
@@ -147,7 +166,7 @@ export function Room() {
             <Tile peer={room.you} local />
           </div>
 
-          <div className="phone-only" style={{ position: "absolute", right: 10, top: duo ? 150 : "auto", bottom: duo ? "auto" : 10, display: "flex", flexDirection: "column", gap: 8, zIndex: 7 }}>
+          <div className="phone-only react-col">
             {REACTS.slice(0, 3).map((r) => (
               <button key={r.kind} className="icon-btn" style={{ background: "var(--glass)", color: r.color }} aria-label={r.label} onClick={() => socket.emit("react", { kind: r.kind })}>
                 {r.icon}
@@ -231,8 +250,8 @@ export function Room() {
         <button className="d-btn desk-only" onClick={() => openSheet("report", room.peers.length === 1 ? room.peers[0].id : null)} aria-label="Report" style={{ color: "var(--coral)" }} disabled={!room.peers.length}>
           <I.Flag />
         </button>
-        <button className="next" onClick={next}>
-          Next <I.Next size={18} />
+        <button className="next" onClick={next} aria-label="Next person">
+          <span className="next-label">Next</span> <I.Next size={18} />
         </button>
         <button className="leave" onClick={leave} aria-label="Leave">
           <I.Leave size={18} />
