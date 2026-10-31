@@ -156,13 +156,29 @@ a { color: var(--accent-ink); }
   .grid[data-n="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid[data-n="5"], .grid[data-n="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-/* Phone 1-on-1: stranger full screen, you in a PIP */
+/* Phones: everyone else fills the stage, YOU float as a draggable PiP (any room size).
+   Drag it anywhere — it snaps to the nearest corner (see lib/pip.ts). */
 @media (max-width: 699px) {
   .grid.duo { display: block; }
   .grid.duo .tile.remote { position: absolute; inset: 0; }
-  .grid.duo .tile.local { position: absolute; top: 10px; right: 10px; width: 96px; height: 128px; z-index: 3; border: 2px solid var(--bg); border-radius: 16px; }
-  .grid.duo .tile.local .tile-tags, .grid.duo .tile.local .tile-badges { display: none; }
+  .grid[data-r="1"] { grid-template-columns: 1fr; }
+  .grid[data-r="2"] { grid-template-columns: 1fr; }
+  .grid[data-r="3"], .grid[data-r="4"], .grid[data-r="5"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid .tile.local {
+    position: absolute; width: 96px; height: 128px; z-index: 5; border: 2px solid var(--bg); border-radius: 16px;
+    touch-action: none; cursor: grab; transition: top .22s ease, left .22s ease, right .22s ease, bottom .22s ease, box-shadow .3s;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
+  }
+  .grid .tile.local.dragging { transition: none; cursor: grabbing; opacity: .92; }
+  .grid .tile.local[data-corner="tl"] { top: 10px; left: 10px; }
+  .grid .tile.local[data-corner="tr"] { top: 10px; right: 10px; }
+  .grid .tile.local[data-corner="bl"] { bottom: 10px; left: 10px; }
+  .grid .tile.local[data-corner="br"] { bottom: 10px; right: 10px; }
+  .grid .tile.local .tile-tags, .grid .tile.local .tile-badges { display: none; }
+  .grid .tile.local.spotlight::after { width: 26px; height: 26px; font-size: 14px; left: 4px; top: 4px; }
 }
+/* Reaction buttons sit mid-right, away from every PiP corner. */
+.react-col { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 7; }
 .tile { position: relative; border-radius: 20px; background: var(--video); overflow: hidden; min-height: 0; transition: box-shadow 0.3s; }
 .tile video { width: 100%; height: 100%; object-fit: cover; background: #000; }
 .tile.local video { transform: scaleX(-1); }
@@ -451,3 +467,41 @@ a { color: var(--accent-ink); }
 .bluff-actions { display: flex; flex-direction: column; gap: 8px; }
 .bluff-actions .btn-primary:disabled { opacity: .5; }
 .bluff-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+
+/* ── Scrolling fixes (iOS Safari) ────────────────────────────────────────────
+   1. In a scrollable flex column, Safari lets children shrink to fit instead of
+      overflowing — so there is "nothing to scroll". Children must not shrink.
+   2. overscroll-behavior stops the swipe from bouncing the page behind the sheet.
+   3. 88vh fallback for browsers without dvh (older iOS). */
+.sheet, .game-float, .panel, .chat-list, .guess-feed { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.sheet > *, .game-float > *, .game > *, .panel > *, .game-list > *, .seat-options > * { flex-shrink: 0; }
+.panel > .chat { flex-shrink: 1; }
+.sheet { max-height: 88vh; max-height: 88dvh; }
+.room { height: 100vh; height: 100dvh; }
+
+/* ── Mobile audit fixes ──────────────────────────────────────────────────── */
+/* P0: 320px phones (iPhone SE 1st gen, small Androids) — dock was cut off at both ends. */
+@media (max-width: 340px) {
+  .dock { gap: 3px; padding-left: 4px; padding-right: 4px; }
+  .dock .d-btn, .dock .leave { width: 40px; height: 40px; }
+  .dock .next { padding: 0; width: 48px; justify-content: center; }
+  .dock .next .next-label { display: none; }
+}
+/* P1: phone held sideways — header + dock ate most of the ~390px height, and the
+   game card covered every video. Slimmer bars, game card becomes a side panel. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .room-top { height: 44px; }
+  .stage-wrap { padding-top: 6px; }
+  .dock { padding-top: 6px; padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+  .dock .d-btn, .dock .leave { width: 40px; height: 40px; }
+  .dock .next { height: 40px; }
+  .seat-bar { padding: 6px 12px; }
+  .game-float { left: auto; top: 6px; bottom: 6px; width: min(380px, 48%); max-height: none; }
+}
+/* P2: odd number of people on a phone → last tile spans the row instead of leaving a hole. */
+@media (max-width: 699px) {
+  .grid[data-r="3"] > .tile.remote:nth-child(3), .grid[data-r="5"] > .tile.remote:nth-child(5) { grid-column: span 2; }
+}
+/* P2: tap targets ≥ 40px; Bluff claim text fits narrow phones. */
+.add-btn { min-height: 40px; }
+.bluff-table .claim b { font-size: clamp(18px, 6vw, 26px); }
